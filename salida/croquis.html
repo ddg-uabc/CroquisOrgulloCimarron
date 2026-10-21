@@ -1,0 +1,61 @@
+<!doctype html><html lang=es><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"> <style>body{height:100dvh;overflow:hidden;background:#0e151b;color:#e8f1f8;font:15px/1.35 system-ui,sans-serif;touch-action:none}#s{position:fixed;inset:0;width:100%;height:100%}#m{transform-box:view-box;transform-origin:0 0;transition:transform .55s}.z{fill:#24425c;stroke:#0b1218;stroke-width:3;transition:.25s}.n{fill:#d5e6f5;font-size:30px;font-weight:800;text-anchor:middle}.act .z{fill:#f2a541;stroke:#8a4f05}.act .n{fill:#241704}#h{position:fixed;left:0;right:0;bottom:0;padding:14px 18px 18px;pointer-events:none;background:#0e151be6}b,s{display:block}b{color:#f2a541;font-size:20px}s{font-size:13px}</style> </head><body><svg id=s viewBox="0 0 1000 850"><g id=m></g></svg><div id=h><b id=t>UABC Campus Mexicali</b><s id=d>Toca un edificio</s></div> <script>var Z=[["A",654,599,115,106],["1-4",311,332,131,131],["E",808,464,77,48],
+["V",202,483,202,78],["T",461,87,135,184],["BIB",690,440,100,150]],
+D=["Fac. Ingenieria","Fac. Derecho","Fac. Arq. y Diseno","Investigacion y Posgrado","Teatro","Biblioteca"],
+s=document.getElementById("s"),M=document.getElementById("m"),
+h=document.getElementById("h"),t=document.getElementById("t"),
+d=document.getElementById("d"),G=[],A=0,i,m;
+
+
+
+
+
+
+
+m='<rect width=1000 height=850 fill=#16241c />'
+ +'<path d="M60 60H960V820H60Z" fill=#1b3a2c stroke=#0f1922 stroke-width=4 />'
+ +'<path d="M170 470H960M480 90V810M700 420V810M60 350H300" stroke=#38485a stroke-width=20 />'
+ +'<path d="M150 90h180v190H150ZM700 90h130v190H700Z" fill=#3a4a5c />';
+
+for(i=0;i<Z.length;i++){
+  var b=Z[i],x=b[1],y=b[2],w=b[3],q=b[4];
+  m+='<g class="g" data-i="'+i+'"><rect class="z" x='+x+' y='+y+' width='+w+' height='+q+' rx=6 />'
+   +'<text class="n" x='+(x+w/2)+' y='+(y+q/2)+' dy=.36em>'+b[0]+'</text></g>';
+}
+M.innerHTML=m;
+
+
+G=M.querySelectorAll(".g");
+
+
+
+
+
+function ver(i){
+  var b=Z[i],x=b[1],y=b[2],w=b[3],q=b[4],
+  W=s.clientWidth,H=s.clientHeight,c=s.getScreenCTM(),u=c.a,
+  vh=h.offsetHeight,vy=((H-vh)/2-c.f)/u,
+  k=Math.min(W/(u*w*1.3),(H-vh)/(u*q*1.3));
+  M.style.transform="translate("+((W/2-c.e)/u-k*(x+w/2))+"px,"+(vy-k*(y+q/2))+"px) scale("+k+")";
+}
+
+function pinta(i){
+  if(A)A.classList.remove("act");
+  A=G[i];if(A)A.classList.add("act");
+}
+function sel(i){
+  pinta(i);
+  t.textContent=Z[i][0]+" · "+D[i];
+  d.textContent="Toca el fondo para volver";
+  ver(i);
+}
+function todo(){
+  pinta(-1);
+  t.textContent="UABC Campus Mexicali";
+  d.textContent="Toca un edificio";
+  M.style.transform="none";
+}
+
+s.addEventListener("pointerdown",function(e){
+  var g=e.target.closest(".g");
+  g?sel(+g.dataset.i):todo();
+});</script> </body></html>
