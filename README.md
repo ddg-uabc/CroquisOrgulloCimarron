@@ -1,1 +1,1652 @@
-# CroquisOrgulloCimarron
+# Orgullo Cimarrón — QR que abre el mapa del evento
+
+Un código QR que, al escanearlo con cualquier dispositivo, abre el mapa
+interactivo de la Rectoría de la UABC en Mexicali para el **Día del Orgullo
+Cimarrón 2026**. Tocar una zona la amplía y muestra su ficha.
+
+El QR **no lleva el HTML dentro**: lleva la dirección del HTML, que ya está
+publicado en GitHub Pages.
+
+```
+https://tonycabreram.github.io/OrgulloCimarron/plantilla/croquis.html
+└────────────── 69 caracteres ──────────────┘
+```
+
+Eso son 49×49 módulos. La versión anterior, con el HTML comprimido dentro del
+propio QR, ocupaba 149×149: **90% más cuadros**, y además había que regenerar
+el QR cada vez que se editaba el HTML.
+
+## Los tres modos
+
+| Modo | Qué lleva el QR | Módulos | Cuándo usarlo |
+| --- | --- | --- | --- |
+| `enlace` *(por defecto)* | Solo la URL del HTML | **49×49** | El normal. Editas el HTML, subes el cambio, y el QR ya abre la versión nueva |
+| `servidor` | URL de una página base + el HTML comprimido en el `#` | 149×149 | Si quieres que el QR no dependa del hosting, o una versión congelada |
+| `sin-servidor` | URL `javascript:` con el HTML dentro | 149×149 | **No sirve para imprimir**: Chrome en Android y Safari en iOS la bloquean |
+
+> **En los tres modos hace falta hosting.** En `enlace` y `servidor` el móvil
+> descarga el HTML de la red; en `servidor` además descarga la página base.
+> Lo único que cambia es de dónde sale el contenido.
+
+## Publicar
+
+El modo `enlace` necesita una sola cosa: que el HTML esté en la URL que lleva
+el QR. En este repo ya lo está, así que basta con subir el cambio cuando
+edites el croquis.
+
+| Servicio | Cómo |
+| --- | --- |
+| **GitHub Pages** *(el de este repo)* | Sube el repo y activa Pages desde la rama |
+| **Netlify Drop** | Arrastra la carpeta, usa la URL que te den |
+| **Cloudflare Pages** | Conecta el repo o sube la carpeta |
+
+Para el modo `servidor` hay que subir además `d.html` en la raíz del repo. Es
+un archivo único que sirve para todos los QR: solo lee `location.hash` y nunca
+cambia.
+
+## El color del QR
+
+La identidad de la UABC es **verde y oro**, los colores del escudo. Los valores
+de abajo salen de mirar el propio sitio `uabc.mx` y el escudo oficial, no de
+suponerlos: el verde `#00723F` está en el escudo, en el manual y en el sitio, y
+el oro `#DAB200` es uno de los colores de la paleta global del sitio.
+
+Se elige con `--color`:
+
+| Opción | Módulos | Contraste | Cuándo |
+| --- | --- | --- | --- |
+| `uabc` *(por defecto)* | `#00723F` | 6.04:1 color, 8.9:1 gris | El verde del escudo, el institucional |
+| `verde-oscuro` | `#024731` | 10.78:1 color, 13.2:1 gris | Verde profundo, con más margen aún |
+| `verde-claro` | `#007738` | 5.68:1 color, 8.6:1 gris | El verde más usado en el sitio |
+| `azul` | `#204199` | 9.22:1 color, 10.2:1 gris | Azul para documentos administrativos |
+| `negro` | `#231F20` | 16.30:1 | Negro tinta, el más seguro de todos |
+
+**El oro no está en la lista, y es a propósito.** `#DAB200` es precioso como
+acento pero clarísimo: sobre blanco da 2.03:1, muy por debajo del mínimo. En el
+croquis se usa para la marca «UABC» sobre fondo oscuro, que es donde sí funciona
+— igual que en el escudo, donde el oro es el campo y el verde el borde.
+
+### Por qué el contraste se mide dos veces
+
+Un lector de QR **termina binarizando la imagen**, así que lo que decide si
+encuentra el código no es el color, sino cuántos píxeles se ven claros u
+oscuros **en gris**. Por eso el generador mide las dos cosas:
+
+```
+Color            : uabc  (#00723F sobre #FFFFFF)
+Contraste        : 6.04:1 en color, 8.86:1 en gris
+```
+
+La prueba `colores institucionales legibles` genera el QR con **todas las
+paletas** y lo lee con zxing-cpp en cinco situaciones: normal, al 55% de tamaño,
+con la mitad de contraste, con poca luz y en blanco y negro.
+
+> **Sobre la suciedad:** si le pones un manchón grande encima, falla con
+> cualquier color, incluido el negro. Eso no es culpa del color, es que el
+> manchón tapa los patrones de referencia. El QR no se rompe, solo hay que
+> limpiarlo.
+
+Cada módulo es un cuadrado, así que lo que manda es el **número de bytes de la
+URL**, no el del documento. En modo `enlace` eso son 69 bytes y no hay nada que
+recortar. Lo único que queda es acortar la URL:
+
+| URL | Caracteres | Módulos (nivel H) |
+| --- | --- | --- |
+| `https://tonycabreram.github.io/OrgulloCimarron/plantilla/croquis.html` | 69 | 49×49 |
+| `https://tonycabreram.github.io/OrgulloCimarron/c.html` *(copia en la raíz)* | 55 | 45×45 |
+| Dominio propio, p. ej. `https://c.im/` | 12 | 25×25 |
+
+### Elegir el nivel de corrección
+
+Con tan pocos bytes hay sitio de sobra, así que se puede elegir el nivel más
+robusto. **No es una decisión gratuita**: subir la corrección de errores obliga
+a **más** módulos.
+
+| Nivel | Corrección | Módulos | Cuándo |
+| --- | --- | --- | --- |
+| `H` *(por defecto)* | 30% | 49×49 | Cartel en la calle, sol, lluvia, que se raye |
+| `M` | 15% | 37×37 | Folleto protegido, interior |
+| `L` | 7% | 33×33 | Los menos cuadros posibles, en papel limpio |
+
+## Cómo se lee en un teléfono (modo `servidor`)
+
+Para el modo `servidor`, el QR apunta a la página base seguida del `#` y el
+fragmento. La página base hace tres cosas:
+
+1. Copia el fragmento de `location.hash` y traduce `-` y `_` a `+` y `/`, porque
+   `atob` solo entiende el alfabeto base64 estándar.
+2. Lo descomprime con `DecompressionStream('gzip')`.
+3. Lo mete en un `<iframe>` con `srcdoc`.
+
+Se usa un `iframe` y no `document.write` a propósito: `document.write` se
+come la propia página base, así que el aviso de error desaparecería y un
+segundo escaneo con la página ya abierta se quedaría en blanco. Con `iframe`
+la base sigue viva, los errores se pueden mostrar y `hashchange` recarga.
+
+## Uso
+
+```bash
+python generar_qr.py --html plantilla/croquis.html --salida salida/croquis --nivel H
+```
+
+Produce en `salida/`:
+
+| Archivo | Para qué sirve |
+| --- | --- |
+| `croquis.png` | El QR listo para compartir |
+| `croquis.svg` | El mismo QR como vector, para imprenta |
+
+Para otro documento, cambia `--html` y `URL_HTML` en `generar_qr.py`.
+
+Opciones útiles:
+
+| Opción | Efecto |
+| --- | --- |
+| `--modo enlace\|servidor\|sin-servidor` | `enlace` (por defecto) es el más pequeño. Ver la tabla de modos |
+| `--nivel H\|M\|L` | Corrección de errores. `H` es la más robusta; `L` da menos módulos |
+| `--color uabc\|verde-oscuro\|verde-claro\|azul\|negro` | Color del QR, de la paleta institucional |
+| `--publicar-en CARPETA` | Modo `servidor`: dónde dejar la página base |
+| `--sin-comprimir` | No aplicar gzip: QR más grande (solo en modos con HTML dentro) |
+| `--no-minificar` | Conservar el HTML tal cual |
+
+El valor de `--html` no determina la URL del QR: esa es `URL_HTML`, la constante
+de arriba del todo de `generar_qr.py`. Si cambias el archivo, cambia la
+constante para que apunte al nuevo sitio.
+
+Para usar otro documento:
+
+```bash
+python generar_qr.py --html mi/pagina.html --salida salida/mi-qr
+```
+
+## Presupuesto de bytes
+
+Solo aplica a los modos que llevan el HTML **dentro** del QR (`servidor` y
+`sin-servidor`). En modo `enlace` no hay presupuesto: lo único que cuenta es
+la longitud de la URL, y son 69 bytes.
+
+El QR más grande (versión 40) admite, en modo byte:
+
+| Nivel | Corrección | Bytes de URL |
+| --- | --- | --- |
+| L | 7% | 2951 |
+| M | 15% | 2327 |
+| H | 30% | 1271 |
+
+Y cada versión trae un salto grande de módulos, que es lo que más pesa:
+
+| Versión | Módulos | Cabe en nivel L |
+| --- | --- | --- |
+| 4 | 33×33 | 78 |
+| 8 | 49×49 | 242 |
+| 30 | 137×137 | 1727 |
+| 33 | 149×149 | 2063 |
+| 38 | 169×169 | 2693 |
+
+**En modo `servidor` el presupuesto real es 2065 bytes** (149×149, nivel L), y
+se llega ahí sin margen: el HTML va comprimido con gzip y codificado en
+base64url. Si añades contenido, mide con `generar_qr.py` antes de imprimir.
+
+## Presupuesto de bytes
+
+Este es el límite real del proyecto. El QR más grande (versión 40) admite:
+
+| Nivel | Corrección | Bytes de URL |
+| --- | --- | --- |
+| L | 7% | 2953 |
+| M | 15% | 2331 |
+| H | 30% | 1273 |
+
+Medido con esta QR, en modo byte (el que usa una URL en base64url):
+
+| Versión | Módulos | Cabe en nivel L |
+| --- | --- | --- |
+| 30 | 137×137 | 1727 |
+| 32 | 145×145 | 1949 |
+| **33** | **149×149** | **2063** ← modo servidor, con 2065 bytes |
+| 34 | 153×153 | 2183 |
+| 38 | 169×169 | 2693 |
+
+Nota: subir el nivel de corrección **no** reduce los módulos, al contrario:
+`H` necesita más módulos para la misma información. Para menos cuadros, nivel
+`L` y menos bytes.
+
+El generador mide la URL **completa** y avisa antes de escribir nada. Se puede:
+
+- Quitar texto innecesario y usar clases en vez de estilos inline
+- Usar abreviaturas en los colores (`#f4d` en vez de `#ff44dd`)
+- Reemplazar imágenes por CSS o SVG inline
+- Subir a `L` si el documento es urgente
+
+## Reglas para que el HTML sea autónomo
+
+Todo lo que uses viaja dentro del QR, así que:
+
+- **Sí**: CSS en un `<style>`, SVG inline, `data:` URIs, JavaScript inline
+- **No**: `link` a hojas externas, `script src`, imágenes sueltas
+
+El generador revisa esto y avisa si detecta recursos que se perderían.
+
+> Esto aplica solo al documento que va **dentro** del QR. La página base
+> (`croquis_base.html`) no tiene ninguna restricción: puede ser larga y
+> legible. Lo único que tiene que caber en 2953 bytes es el fragmento.
+
+## Pruebas
+
+```bash
+python test_qr.py
+```
+
+Verifica el ciclo completo: genera el QR, lo lee con **zxing-cpp** (la misma
+librería que usan los lectores de móvil), decodifica el fragmento y confirma que
+el HTML recuperado es idéntico al original.
+
+La prueba `modo enlace: QR = URL` comprueba que el QR por defecto sea
+exactamente la URL del HTML, sin fragmento ni `javascript:`, y que ese HTML
+esté en el repo y sea autónomo (sin recursos externos). Sin eso, el QR podría
+apuntar a un archivo que no abre nada.
+
+`URL publicada responde` hace un GET a la URL real: si da 404, se puede
+imprimir un QR que no abre nada. Se omite si no hay conexión.
+
+`escaneo desde un movil` recorre el flujo del modo `servidor` (QR → página
+base → documento) y que la base lea el fragmento y escuche `hashchange`.
+
+Y `atributos sin comillas no se tragan` y `croquis con zonas coherentes` vigilan
+dos fallos que **no dan error en la consola** pero dejan el croquis en negro o
+vacío. Son la razón de que existan.
+
+`croquis con zonas coherentes` merece un párrafo aparte, porque cubre cinco
+cosas que se rompen calladas: que cada zona tenga sus cuatro campos, que su
+polígono tenga al menos 3 puntos y 20 pt² de área, que quepa dentro del mapa,
+que la descripción pase de 10 caracteres y que **ningún par de zonas se
+solape**. Lo último se comprueba con el teorema de los ejes separadores, no
+comparando cajas: dos bandas diagonales tienen cajas que se cruzan sin que los
+polígonos se toquen, y comparar cajas daba falsos positivos. También verifica
+que el `<image href>` apunte a un archivo que exista de verdad.
+
+Las reglas no están escritas dos veces: viven en `editor/validar.py` y la
+prueba las importa. Son las mismas que usa el editor para decidir si deja
+guardar, así que no pueden separarse sin que salte una prueba.
+
+`el croquis publicado no edita nada` es la que protege lo que ve el público:
+comprueba que `croquis.html` no tenga ni formularios, ni `fetch`, ni
+`localStorage`, ni nada que cargue código de fuera. `el editor rechaza lo
+ajeno` levanta el servidor del editor en un puerto libre y le ataca con un
+`Host` que no es localhost, con dos zonas solapadas y con un icono de un tipo
+inventado: los tres tienen que rebotar, y el croquis no puede cambiar ni un
+byte.
+
+> OpenCV no sirve para esta comprobación: su detector falla a partir de la
+> versión ~20 del QR, muy por debajo de lo que decodifica un teléfono.
+
+## Estructura
+
+```
+Final.ai                El póster original en Illustrator, 1224 x 1224 pt. NO está
+                        en git (es una fuente, y pesa); de aquí sale el SVG
+FinalSinCosas.svg  El póster exportado a SVG, 1224 x 1224, en la raiz. NO está
+                  en git: es la fuente, y la que se publica es la copia de
+                  plantilla/, que va sin tocar
+Logos/ ... FINAL2.webp  El póster exportado a WebP, 1224 px. Ya no se usa: se
+                        quedó sin el detalle de los pictogramas, que es lo que
+                        lo hace inservible
+Logos/ ... FINAL2.svg   El mismo póster en SVG. No se usa: trae los pictogramas
+                        dentro, que el croquis vuelve a pintar encima
+CroquisSolo.ai          El mapa anterior, 1224 x 792 pt. Ya no se publica; se queda
+                        porque es contra el que se midió el desplazamiento del nuevo
+generar_qr.py      Generador: mide, empaqueta y dibuja el QR
+test_qr.py         Pruebas del ciclo completo
+d.html             Página base, solo para el modo servidor
+plantilla/
+  croquis.html     El mapa interactivo (este es el que se publica)
+  FinalSinCosas.svg   El fondo: el póster entero, 6 438 KB, con los dos banners
+                      dentro. Va tal cual, sin recortar ni rasterizar
+  plantilla.html   Documento de ejemplo
+  planos/          Croquis del campus descargados (referencia vieja)
+editor/            Herramienta de edición. NO se publica.
+  editor.py        Servidor local: el único que puede escribir el croquis
+  editor.html      La interfaz de edición
+  validar.py       Las reglas, compartidas con las pruebas
+  _respaldo/       Copia del croquis antes de cada guardado (fuera de git)
+  iconos/          PNG de los iconos propios, para reutilizarlos (fuera de git)
+salida/            QR generado
+```
+
+## El croquis de la Rectoría
+
+`plantilla/croquis.html` es el mapa interactivo del evento **Día del Orgullo
+Cimarrón 2026**, en la Rectoría de la UABC en Mexicali. El arte es el mapa que
+se hizo en Illustrator, no un dibujo generado por código.
+
+| Acción | Resultado |
+| --- | --- |
+| Tocar una zona | Zoom hacia ella y la ficha muestra su nombre y su descripción |
+| Tocar un acceso rápido del panel | Lo mismo, sin tener que acertarle a la zona en el mapa |
+| Tocar el botón del programa | Abre, en otra pestaña, el programa alojado en el ownCloud de la UABC |
+| Tocar en cualquier parte | Vuelve a la vista general |
+
+**Al tocar solo se hace zoom.** Las zonas son polígonos transparentes: existen
+para recibir el toque, no para dibujar nada encima del arte. Un primer diseño
+oscurecía el resto del mapa y contorneaba la zona activa; se quitó porque el
+diseño de Illustrator ya se lee solo y cualquier adorno encima lo ensucia.
+
+**El zoom se deshace tocando en cualquier parte.** Antes sólo servía tocar el
+fondo, y eso casi nunca ocurría: al ampliar, la zona ocupa casi toda la
+pantalla y no queda fondo donde pulsar.
+
+### Las zonas
+
+Las zonas y sus textos los define `ZONAS` en el propio `croquis.html`, y se
+editan con el editor. La lista no se copia aquí a propósito: cambia cada vez
+que se ajusta el mapa, y una copia acabaría mintiendo. El archivo es la única
+fuente.
+
+Las calles del perímetro sí se pueden anotar, porque vienen del dibujo y no
+cambian: Calle Guillermo Prieto (norte), Av. Reforma (poniente),
+Av. Sebastián Lerdo de Tejada (oriente) y Calle Julián Carrillo (sur).
+
+### El botón del programa
+
+Debajo de los accesos rápidos hay un botón que **sale del mapa**: el programa
+del evento, alojado en el ownCloud de la UABC. Va aparte y con un filo que lo
+separa de los chips porque es otra cosa: los chips llevan a una zona del mapa,
+este lleva a otro sitio.
+
+Abre en pestaña nueva para que la persona no pierda el mapa, y lleva el icono
+de salir a otro sitio porque, sin esa pista, que el mapa no cambie al pulsar
+desconcierta.
+
+Es una etiqueta `<a>` escrita a mano en el HTML, no una zona ni un icono: el
+editor no la toca. La prueba `el croquis publicado no edita nada` vigila que
+los enlaces de salida no sean `javascript:` y que, si abren en pestaña nueva,
+lleven `rel="noopener"`. Sin ese atributo, la página de destino puede
+manipular la del mapa.
+
+### El fondo es el póster entero, en una sola pieza
+
+El fondo del croquis **es el póster**: `plantilla/FinalSinCosas.svg`, el archivo
+del que sale el mapa y los dos banners, tal cual, sin recortar y sin rasterizar.
+En el croquis es un único `<image>` de 1224 × 1224.
+
+**El original es `Final.ai`**, el póster completo en Illustrator, y de ahí sale el
+SVG. El SVG es el que se publica; el `.ai` y el `.vectorcraft` se quedan fuera de
+git, que son las fuentes.
+
+**Y qué versión del póster vale.** El FINAL2 y el `.webp` que se exportó de él **no
+valen para el fondo**: traen el mapa con los pictogramas dentro —aseos, agua,
+primeros auxilios, parquímetro y las tiras de puestos numeradas ya dibujados— y el
+croquis pinta encima sus propios cuarenta y seis iconos, en los mismos sitios.
+**Cada icono se veía dos veces**, y desde el archivo parece que todo está bien: sólo
+se nota en la pantalla.
+
+`FinalSinCosas.svg` es el que evita eso de origen: trae las calles, las tiras de
+puestos y las etiquetas, pero sin los pictogramas. De ahí el nombre.
+
+**POR QUÉ UNA SOLO PIEZA, Y NO TRES IMÁGENES**
+---------------------------------------------
+Antes eran tres: el mapa y los dos banners, cada una con su archivo. Con eso había
+un modo de fallo que no da ningún error: que una llegue antes que otra. El mapa
+tarda mucho más en bajar que los banners, así que se veía el cartel con el título y
+el dibujo de abajo, y en medio un rect gris del tamaño del mapa.
+
+Con una sola pieza no hay orden que sincronizar: llega el poster o no llega nada.
+
+| | antes | ahora |
+| --- | --- | --- |
+| Peticiones | 2 al abrir, 1 al acercar | **1** |
+| Al abrir | 144 KB (mapa + los dos banners) | **2 948 KB con gzip** |
+| Al acercar | + 372 KB | **nada: el SVG escala** |
+
+**LO QUE SE PAGA: 2,9 MB EN LA PRIMERA CARGA**
+----------------------------------------------
+El SVG pesa 6 438 KB en crudo y **2 948 KB con gzip**, que es lo que sirve GitHub
+Pages. Antes, en la primera carga, un móvil bajaba 144 KB. **Son veinte veces
+más**, y en una conexión lenta se nota mucho: mientras baja, lo que se ve es el
+rect del papel.
+
+Y de dónde salen esos 2 948 KB, medido quitando cada cosa por separado:
+
+| | KB con gzip |
+| --- | --- |
+| El patrón de la hierba: nueve mil trazados en un mosaico de 153 × 141 px | **1 327** |
+| Los dos PNG de los banners, incrustados en el archivo (1 708 KB de PNG en base64) | **1 431** |
+| El resto: el mapa, las calles y las etiquetas | **190** |
+
+> **Las tres maneras de bajarlo, todas medidas.** Se pueden aplicar una a una o
+> juntas, y ninguna toca el dibujo: convertir los dos PNG incrustados en WebP los
+> deja en 384 KB, y rasterizar la hierba en un mosaico de 3× la deja en 49 KB. Con
+> las dos cosas el archivo se quedaría alrededor de los **400 KB**, por debajo de
+> los 516 KB que pesaban los WebP, y con el mapa vectorial igual. No es lo que se
+> ha puesto, porque el encargo era usar el archivo tal cual, pero está medido.
+
+**Y ya no hace falta ningún renderizador.** No hay Inkscape ni rsvg ni ImageMagick, y
+**PyMuPDF no sirve** para dibujar un SVG: no lee el `<style>` de clases ni los
+rellenos `url(#pattern)`, y el mapa le sale entero en negro —se comprobó con dos
+rectángulos de prueba, uno con `fill:#4fac48` en el estilo y otro con un patrón, y
+los dos negros—. Mientras hubo que rasterizar, `preparar_mapa.py` pintaba el SVG
+con el Chromium de Playwright, que son 115 MB que había que descargar. **Ahora el
+navegador dibuja el fondo por su cuenta**, que es lo que siempre se quiso, y ni el
+repositorio ni el equipo necesitan nada instalado.
+
+> Eso costó tres iteraciones. La primera cogió el mapa del `.ai` y salió con todo
+> duplicado. La segunda usó el `.webp` de `Logos/`, que era la versión limpia pero
+> estaba exportada a 1224 px, así que no había versión en alta y todo se veía algo
+> blando. La tercera se quedó con el `.ai` limpio, que se rasteriza a cualquier
+> resolución. Y esta cuarta cambia el origen al SVG, que además trae el cartel
+> nuevo de los banners.
+
+**El poster son tres franjas:** el banner con el título de `y=0` a `216`, el mapa
+de `216` a `1008`, y el banner de abajo de `1008` a `1224`. En el croquis el mapa
+se publica de `0` a `792` —donde estaba— y los dos banners van alrededor. Los tres
+ya no se colocan: **van dentro de la pieza, que es el poster entero**, así que la
+única cuenta es dónde se pone esa pieza.
+
+**Y el mapa va desplazado un píxel.** En el poster está un píxel más abajo que en
+el dibujo anterior, así que la pieza va en `y = -217` en vez de `y = -216`. Es el
+mismo `DESPLAZE_Y` que medía `preparar_mapa.py`, y sigue siendo un número medido,
+no supuesto: es el desplazamiento que más correlación da entre los dos dibujos,
+y el pico es clarísimo.
+
+| desplazamiento | correlación con el fondo anterior |
+| --- | --- |
+| −2 | 0.6808 |
+| −1 | 0.7604 |
+| 0 | 0.8917 |
+| **+1** | **0.9900** |
+
+El `+1` dice que hay que subir el mapa un píxel. El 0.9900 dice además que es **el
+mismo dibujo**: 0.99 entre dos imágenes es, prácticamente, la misma imagen.
+
+Sin ese píxel, las diez zonas y los cuarenta y seis iconos —que están escritos
+en coordenadas fijas— quedarían desplazados respecto al dibujo. Y no se vería en
+la imagen: se vería cuando alguien toca y le abre otra zona.
+
+> Y que el cambio no lo movió está comprobado, no supuesto: la página se
+> fotografió antes y después en un móvil emulado, a 390 × 844 con densidad 2, y se
+> compararon píxel a píxel. **99,98 % de los píxeles idénticos, diferencia media
+> 0,00.** El mismo método aplicado a la misma comparación con la imagen movida un
+> píxel da 4,80 de media y un 4,7 % de píxeles con diferencia grande, así que
+> detecta el desplazamiento: el mapa sigue exactamente donde estaba.
+
+**Y por qué el lienzo mide 1223 de alto y no 1224.** La pieza va en `y = -217` y
+mide 1224, con lo que ocupa de −217 a 1007. Un lienzo de 1224 de alto llegaría a
+1008 y dejaría **una fila de papel al pie**, y en el poster esa fila es verde. Con
+`viewBox="0 -216 1224 1223"` el lienzo acaba justo donde acaba la pieza, y la
+última fila del poster —la del borde de abajo del banner— se sigue viendo. Es un
+píxel de diferencia en el lienzo, y ninguno en el mapa.
+
+| | |
+| --- | --- |
+| Tamaño del poster | 1224 × 1224 |
+| Dónde va la pieza | `x=0`, `y=−217`, 1224 × 1224 |
+| Dónde queda el mapa | de 0 a 792, donde estaba |
+| Lienzo | `viewBox="0 -216 1224 1223"` |
+| Papel de debajo | `#e4e0e4`: el gris del poster (`#eae8e8`) con el velo morado del 5 % de la exportación de VectorCraft encima |
+| Lo que se publica | `plantilla/FinalSinCosas.svg`, 6 438 KB, tal cual |
+
+**Al cambiar el arte hay que subir el `?v=` de la dirección.** En `croquis.html`
+la imagen se pide como `FinalSinCosas.svg?v=14a13a19`, y ese número es el sha1 del
+propio archivo en corto.
+
+Hace falta de verdad: GitHub Pages sirve el archivo con
+`Cache-Control: max-age=600`, así que **durante diez minutos después de subir un
+cambio se sigue viendo el mapa anterior, recargando inclusive**. Con la
+dirección cambiada no queda nada que reutilizar y el cambio se ve al instante.
+
+Y es de los fallos que peor se leen: un `?v=` que se queda viejo no da ningún
+error, solo un mapa que no cambia — que desde fuera parece «no se subió el
+cambio» o «se subió mal». Por eso el número **no se escribe a mano**: una prueba
+lo compara con el sha1 real del archivo y, si no cuadra, dice exactamente qué
+poner. Para calcularlo:
+
+```bash
+python -c "import hashlib,pathlib;print(hashlib.sha1(pathlib.Path('plantilla/FinalSinCosas.svg').read_bytes()).hexdigest()[:8])"
+```
+
+**El texto del mapa son contornos, no texto.** Al convertir las tipografías,
+los rótulos dejaron de ser texto extraíble. Por eso los nombres de las zonas
+viven en `croquis.html` y no se pueden leer del original.
+
+### Cómo está armado el HTML
+
+El mapa se dibuja con un `<image>` dentro de un `<svg viewBox="0 -216 1224 1224">`,
+en el mismo sistema de coordenadas que el póster. Así los números de `ZONAS` se
+leen directamente sobre el dibujo.
+
+El `viewBox` empieza en **-216** y no en 0 porque el croquis publica el **póster
+entero**: el banner con el título de -216 a 0, el mapa de 0 a 792, y el banner de
+abajo de 792 a 1008. El mapa se queda exactamente donde estaba, así que ninguna
+zona, ningún icono y ningún número ha cambiado: lo único que creció es el lienzo.
+
+```javascript
+/* === INICIO ZONAS === */
+var ZONAS = [
+  ["Rectoría · Exposición CGECDC", "Rectoría",
+   [[540,330],[788,330],[788,582],[540,582]],
+   "La exposición del CGECDC, en el edificio de Rectoría."],
+  …
+];
+/* === FIN ZONAS === */
+```
+
+Cada zona es `[nombre, nombre corto, polígono, descripción]`. La caja que se
+encuadra al ampliar **no se guarda**: se calcula del polígono con `caja()`.
+Tener las dos cosas era pedir que se desincronizaran, y de hecho pasó — al
+ajustar los polígonos las cajas se quedaron viejas y el zoom dejaba parte de
+la zona fuera de cuadro.
+
+Los comentarios `INICIO`/`FIN` los usa el editor para saber qué trozo
+reescribir. Se explican más abajo.
+
+- **Las bandas diagonales van como cuadriláteros**, no como rectángulos. Los
+  estacionamientos y las hileras de stands están inclinados en el dibujo; un
+  rectángulo normal que los cubriera incluiría medio prado al lado.
+- **Dos zonas no pueden solaparse.** Al tocar caería la de encima y la otra
+  quedaría inalcanzable justo ahí. Hay una prueba que lo comprueba con el
+  teorema de los ejes separadores, y otra que verifica que todas quepan en el
+  mapa.
+
+### Los adornos de las zonas
+
+Una zona **nace invisible**: es un polígono transparente que solo existe para
+recibir el toque, para no tapar el dibujo del artista. Los adornos son
+opcionales y son lo que la hace visible en el mapa publicado.
+
+Van en un **objeto aparte, en quinto lugar** dentro de la zona:
+
+```javascript
+["Teatro al aire libre", "Teatro",
+ [[404,154],[578,158],[544,287],[361,211]],
+ "El foro del evento, con el escenario al aire libre.",
+ {"f": "#c8e6c9", "l": "#00723f", "b": "camina"}]
+```
+
+| Clave | Qué es | ¿Hace falta? |
+| --- | --- | --- |
+| `f` | El color de relleno, en `#rrggbb` | No, sin relleno |
+| `l` | El color de la línea, en `#rrggbb` | No, sin línea |
+| `p` | `1` para la línea punteada | No, línea seguida |
+| `rd` | Cuánto se redondean las esquinas, en puntos del mapa (1 a 60) | No, esquinas rectas |
+| `a` | La animación de la zona: mueve el fondo y la línea | No, quieta |
+| `b` | La animación del borde: mueve solo la línea | No, quieta |
+| `m` | La intensidad, de 0.2 a 2.5 | No, 1 |
+
+**Los cuatro primeros campos siguen siendo posicionales y no se tocan.** Los
+adornos van en un objeto con nombres en lugar de seguir alargando la tupla: con
+un `z[5]` para el color y un `z[6]` para la animación habría que contar comas
+con la vista al leer el archivo, que es justo el problema que se quitó de los
+iconos.
+
+**Y son opcionales de verdad.** Una zona sin adornos se escribe con sus cuatro
+campos de siempre y se dibuja igual que antes de que existieran: el servidor
+quita el quinto campo cuando queda vacío. Si no, cambiar los adornos de una
+zona reescribiría las diez del mapa y el diff de git no se podría leer.
+
+**El toque y lo que se ve van en el mismo elemento.** No hay uno encima del
+otro: con el relleno transparente el navegador ya lo da por pintado y recibe la
+pulsación, que es como funcionaba antes. Un segundo elemento solo para pintar
+sería duplicar los puntos y tener dos cosas que se pueden desincronizar.
+
+#### Las esquinas redondeadas
+
+Se dibuja **siempre un `<path>`**, aunque no haya redondeo, para que haya un
+solo camino de código: lo que se prueba con las esquinas rectas es exactamente
+lo mismo que se usa con las redondeadas. Con `rd` en 0 el `d` que sale es
+**idéntico** al polígono de siempre, y hay una prueba que lo comprueba letra a
+letra — si eso fallara, todas las zonas del mapa cambiarían de forma sin que
+nadie lo hubiera pedido.
+
+Cada esquina se sustituye por una curva que pasa por el vértice de verdad, con
+el vértice como punto de control:
+
+```
+L (punto de entrada)  Q (la esquina) (punto de salida)
+```
+
+Así el contorno **nunca se separa del polígono** que se editó: la curva queda
+por dentro del ángulo, y la caja que se encuadra al hacer zoom sigue valiendo.
+
+**El radio se recorta a la mitad del lado más corto de cada esquina.** Sin ese
+recorte, un radio mayor que el lado haría que las curvas de dos esquinas
+vecinas se cruzaran y el contorno se retorciera en un lazo. Medido: en un
+rectángulo de 100 × 10 con un redondeo de 500, sale una cápsula limpia con
+radio 5, sin un solo `NaN`.
+
+#### Las animaciones de las zonas
+
+Se mueven `opacity` (la zona) y `stroke-opacity` y `stroke-dashoffset` (el
+borde). Son propiedades distintas, así que **se pueden llevar las dos a la
+vez**: una zona puede latir mientras su borde avanza.
+
+| Animación | Dónde | Qué hace |
+| --- | --- | --- |
+| `late` | zona y borde | La opacidad sube y baja, sin llegar a desaparecer |
+| `brilla` | zona y borde | Aparece y desaparece del todo |
+| `destello` | zona | Un aviso: baja rápido y se queda quieta el resto |
+| `camina` | borde | Los guiones avanzan por todo el borde, como una carretera |
+
+**`camina` es la de la carretera.** Los guiones van avanzando por el borde:
+
+```css
+#zonas .g.zb-camina{
+  stroke-dasharray:calc(9 * var(--m, 1) * 1px) calc(7 * var(--m, 1) * 1px);
+  animation:bordeCamina 1.6s linear infinite}
+@keyframes bordeCamina{
+  to{stroke-dashoffset:calc(-16 * var(--m, 1) * 1px)}}
+```
+
+Tres detalles que tienen que cuadrar o el efecto se rompe sin dar ningún error:
+
+- **El desplazamiento tiene que ser exactamente un periodo de guiones** (9 + 7 =
+  16). Con 15 o 17, cada vuelta daría un tirón visible al reiniciarse.
+- **Va en negativo.** El patrón se mueve al revés que el desplazamiento: en
+  positivo, la línea parecería ir hacia atrás.
+- **Y termina en `* 1px`.** Parece un adorno y no lo es: sin esa unidad el
+  cálculo da un número sin unidad, y el navegador **no lo interpola**. Medido:
+  sin el `1px` el desplazamiento pasa por **2 valores** y salta de 0 a −16 de
+  golpe, o sea que los guiones **parpadean en el sitio** en vez de avanzar; con
+  él, pasa por **34 valores** y recorre el camino. La animación figura como
+  corriendo y el valor final es el correcto, así que el síntoma se lee como «la
+  animación no se ve», que es exactamente lo que se reportó.
+
+La prueba comprueba las tres cosas, y también que los números del `keyframes`
+y los del `dasharray` sigan cuadrando: si alguien cambia uno sin el otro, el
+borde da un salto en cada vuelta y no hay ningún error que lo diga.
+
+`camina` **pone sus propios guiones**, más largos que el punteado normal, así
+que no hace falta marcar «línea punteada»: esa casilla es para una línea
+quieta. Y la intensidad **alarga las rayas**, que es lo que en una carretera
+significa «más». La prueba comprueba que los números del `keyframes` y los del
+`dasharray` sigan cuadrando: si alguien cambia uno sin el otro, el borde da un
+salto en cada vuelta y no hay ningún error que lo diga.
+
+**El borde necesita línea, y el editor la enciende sola.** Al principio, elegir
+una animación de borde con la línea apagada estaba prohibido: el desplegable
+salía deshabilitado hasta poner un color. Eso hacía que la animación de la
+carretera **pareciera no existir** — se buscaba en la lista y no se podía
+seleccionar, sin ninguna explicación. Ahora se puede elegir siempre, y al
+hacerlo se enciende la línea con el color que hubiera en el selector.
+
+Y al revés: **quitar la línea quita también el punteado y la animación del
+borde.** Antes solo se quitaba la línea, y como la animación del borde la
+volvía a encender sola, la casilla parecía rota: la desmarcabas y seguía
+puesta.
+
+#### El color va por variables
+
+En el editor, el color de una zona se pasa como `--zf` y `--zl` en lugar de
+ponerse directamente en el `fill` y el `stroke`. Así el color elegido manda
+sobre el aspecto de fábrica de las zonas (el verde translúcido de edición),
+pero **el filo de la zona seleccionada y el de la que tiene un problema siguen
+mandando por encima**. Al revés, el resaltado no se vería y no habría forma de
+saber cuál se está moviendo.
+- **El encuadre se calcula en JavaScript**, no se deja al `viewBox`: el mapa se
+  centra y se amplía dentro del hueco libre que dejan el encabezado y el panel,
+  midiéndolos con `getBoundingClientRect()`. Dejar el encuadre al `viewBox`
+  hacía que el mapa quedara pequeño y que el panel tapara las zonas del borde.
+- **El zoom es un `transform` CSS** sobre el `<g>` interior con una
+  `transition`, no un bucle que anima el `viewBox`: el navegador lo interpola
+  solo y no hay JavaScript por fotograma. El `<g>` lleva `will-change:
+  transform` para que el navegador lo tenga en su propia capa y no repinte el
+  mapa entero en cada fotograma.
+- **El panel no lleva desenfoque de fondo.** Tenía un `backdrop-filter` de
+  14 px que se quitó: con el fondo al 97% de opacidad no se veía nada de lo de
+  detrás, y en cambio obligaba a recalcular el desenfoque en *cada* fotograma
+  del zoom, porque debajo hay un mapa moviéndose. Pagaba un precio alto por un
+efecto invisible.
+- **El panel es barra inferior en vertical y lateral en apaisado**
+  (`@media (min-width:760px) and (orientation:landscape)`). En pantalla ancha
+  una barra inferior desperdicia el ancho y deja el mapa chico y centrado.
+- **En apaisado el encabezado se aparta a la derecha del panel**
+  (`#cab{padding-left: 372px}`, que es el `left` del panel más su ancho). Los
+  dos van anclados arriba a la izquierda, así que sin eso el panel le pasa por
+  encima y se come el título. Se aparta el encabezado en vez de bajar el panel
+  porque el mapa se encuadra a partir del borde inferior del encabezado:
+  bajarlo le quitaría alto al mapa, y subirlo no cabe. La prueba
+  `el toque y el encabezado` lee las dos medidas del CSS y comprueba que el
+  encabezado empiece después del panel, así que ensanchar el panel sin tocar
+  esto avisa en vez de dejar el título escondido.
+- **Accesos rápidos**: los botones del panel. El mapa es apaisado y en un móvil
+  vertical queda chico, así que tocar una banda diagonal con el dedo es difícil;
+  el panel sirve para navegar además de para informar.
+
+> **El croquis no cabe dentro del QR.** Pesa unos 12 KB más 0.50 MB de imagen,
+> y los modos que embeben el documento (`servidor` y `sin-servidor`) admiten
+> ~2950 bytes de URL. Por eso el modo por defecto es `enlace`, que lleva
+> únicamente la dirección del HTML. La prueba `QR actual decodificable` usa
+> `plantilla/plantilla.html` para verificar el mecanismo, no este documento.
+
+### Los iconos
+
+Los símbolos de punto del mapa (baños, primeros auxilios, comida) van en un
+array de objetos, uno por icono:
+
+```javascript
+/* === INICIO ICONOS === */
+var ICONOS = [
+  {"t": "bano", "x": 300, "y": 250, "n": "Baños junto al escenario", "i": ["Baños", "Los baños están junto al escenario."]},
+  {"t": "estrella", "x": 500, "y": 400, "n": "Punto de interés", "s": 70, "r": -15, "a": "viento", "m": 1.6}
+];
+/* === FIN ICONOS === */
+```
+
+| Clave | Qué es | ¿Hace falta? |
+| --- | --- | --- |
+| `t` | El tipo: un símbolo de serie o un icono propio | Sí |
+| `x`, `y` | Dónde va, en las coordenadas del mapa | Sí |
+| `n` | El nombre que se lee al pasar el ratón | No |
+| `s` | Lo que mide, de 16 a 160 unidades | No, 46 |
+| `r` | El giro, en grados | No, 0 |
+| `a` | La animación | No, ninguna |
+| `m` | La intensidad del movimiento, de 0.2 a 2.5 | No, 1 |
+| `c` | `0` para quitarle el círculo de fondo | No, lo lleva |
+| `i` | `[título, texto]`: la ventana que sale al pulsarlo | No, y sin esto no se puede pulsar |
+| `u` | `[texto, dirección]`: un botón con enlace dentro de esa ventana | No, y necesita `i` |
+
+**Antes era una tupla posicional** y creció hasta siete campos, que es donde uno
+empieza a contar comas con la vista. Con nombres, cada dato se lee solo, se
+pueden dejar fuera los que no hacen falta y añadir uno nuevo no rompe los
+iconos que ya había. El serializador escribe siempre el mismo orden y omite lo
+vacío, así que un icono normal ocupa una línea corta y el diff de git enseña lo
+que de verdad se tocó.
+
+**El tamaño va en unidades del mapa, no en píxeles**: los iconos son parte del
+plano y crecen con el zoom igual que las calles.
+
+### Con círculo o sin él
+
+Por defecto un icono lleva el círculo claro con filo detrás, que es lo que lo
+despega del pasto. Se le puede quitar, y entonces se ve solo el dibujo.
+
+**El `0` se comprueba con `in`, no por lo que vale.** Un `if (!ic.c)` tomaría el
+`0` por ausencia y el círculo seguiría saliendo: es un valor legítimo, no un
+«no está». Hay una prueba que vigila las tres partes —el servidor que lo
+escribe, el croquis que lo lee y el editor que lo enseña— precisamente porque
+es un fallo fácil de cometer en cualquiera de ellas.
+
+Sin círculo, los símbolos vectoriales llevan un **halo blanco** alrededor del
+trazo (`drop-shadow` en las cuatro direcciones, dos veces). El pasto es una
+textura cargada y se come las líneas finas. A una imagen propia se le quita
+además el recorte en círculo: si se quita el círculo, se quita entero, y una
+foto sale como es. Media medida dejaría la imagen redonda sin nada que lo
+explique.
+
+**Los iconos no reciben el toque**, salvo los que llevan información. El grupo
+va con `pointer-events: none`, que heredan los hijos, así que un icono plantado
+en medio de un estacionamiento no se come esa parte del estacionamiento. Los
+que llevan ventana se lo devuelven uno por uno: son pocos y pequeños, y a
+cambio de un trozo mínimo de zona se puede consultar algo.
+
+**Pero devolvérselo al grupo no basta.** Un `<g>` no tiene forma propia, así
+que el toque lo tiene que recoger algo de dentro, y ahí no vale cualquiera:
+
+- el **aro** vale cuando lo lleva, porque está pintado;
+- la **imagen propia** tiene el toque desactivado a propósito, para no
+  quitarle la pulsación a la zona de debajo;
+- un **símbolo** son trazos sueltos, así que solo responde justo encima del
+  trazo, no en el hueco de dentro.
+
+Por eso cada icono con información lleva un círculo `.toque`: la superficie de
+verdad, transparente y del tamaño del aro. Va con `fill: none` y
+`pointer-events: fill`, que es la pareja que importa — **`pointer-events: auto`
+no valdría**, porque ese valor (que es `visiblePainted`) exige que la forma esté
+pintada, y con `fill: none` no lo está. Es el fallo que tuvo el mapa: los
+iconos sin aro se quedaban sin superficie, el toque se colaba hasta el mapa, y
+como el mapa deshace el zoom al tocarlo, pulsar el icono no abría la ventana:
+la deshacía. Desde fuera parecía «el icono no hace nada».
+
+### Los modelos
+
+Un **modelo** es un icono guardado entero —tipo, tamaño, giro, animación,
+intensidad, círculo e información— menos la posición. Se guarda desde el panel
+con **Guardar como modelo**, aparece en la caja **Modelos** y al pulsarlo cada
+clic en el mapa pone uno igual.
+
+Es lo que hace que poner veinte puestos de comida iguales sean veinte clics y no
+veinte veces de configurarlos a mano. En la lista se ve la miniatura con su
+tamaño, su giro, su animación y su círculo de verdad, y debajo una nota corta
+(`late · 70 · sin aro · info`, o `viento ×1.6`) para saber qué lleva cada uno
+sin abrirlo.
+
+Guardar con un nombre que ya existe **reemplaza** en vez de acumular: al volver
+a guardar «Puesto de comida», el de antes pasa a ser el de ahora. Si se
+acumularan, la lista se llenaría de variantes y no se sabría cuál es la buena.
+
+**Los modelos no van dentro del croquis.** Viven en `editor/modelos.json`, que
+está fuera de git como la biblioteca de imágenes. Son una herramienta de quien
+edita, no contenido del mapa: el archivo publicado no los necesita y cada byte
+suyo lo descarga un móvil por nada. El croquis solo lleva lo que se ve.
+
+### Poner varios seguidos
+
+Al pulsar un símbolo de la paleta o un modelo, el editor se queda **en modo
+estampado**: cada clic en el mapa añade uno con esa configuración, y el modo no
+se suelta hasta que se sale. Se sale con `Escape` o volviendo a pulsar lo mismo.
+
+Antes se soltaba al primer clic, que está bien para poner uno y mal para poner
+quince. Arrastrar, en cambio, sí estampa una sola vez y suelta: un arrastre es
+una acción suelta, no un modo.
+
+Mientras está puesto, la barra de arriba lo dice y el botón de la paleta queda
+marcado, porque si no es fácil quedarse pulsando el mapa sin saber por qué sale
+un icono cada vez.
+
+### La ventana de información
+
+Al pulsar un icono con `i` sale una ventana con su título y su texto. Es la
+misma ventana para todos: se le cambia el contenido y se muestra, así que no
+hay forma de que queden dos abiertas ni de que se acumulen en el DOM.
+
+Sale **centrada**, también en el móvil. Antes se pegaba abajo y ocupaba el
+ancho: la idea era no tener que acertarle al botón de cerrar, pero en un
+teléfono alto la ventana quedaba a media pantalla de distancia del icono que se
+acababa de tocar, y parecía que el toque no había hecho nada.
+
+Va con `place-items: center` y, en una segunda línea, `align-items: safe
+center`. Ese `safe` es por si la caja no cupiera de alto: con un `center` a
+secas, lo que sobra **se sale por arriba** y de ahí no se puede bajar con el
+dedo, porque el scroll solo llega hacia abajo. `safe` la pega al borde en ese
+caso. Si el navegador no lo entiende, se queda con el `center` de la línea
+anterior, que es lo normal: la caja nunca pasa del 78 % del alto de la pantalla.
+
+Lleva el mismo fondo, el mismo filo y el mismo verde que el panel: se tiene que
+ver que es algo que se abre encima del mapa y no una pantalla aparte.
+
+Se cierra con el botón, tocando el fondo o con `Escape`. Empieza en `hidden`,
+que además de esconderla la saca del alcance del teclado; y al cerrarse espera a
+que acabe la transición antes de volver a esconderla, porque si no el fondo
+seguiría interceptando el toque y el mapa dejaría de responder.
+
+El toque sobre un icono **corta la propagación** en el `pointerdown`. Si no, el
+`<svg>` lo recibiría también y además de abrir la ventana desharía el zoom por
+detrás.
+
+### El sello: el icono con su margen
+
+La ventana lleva arriba el icono que se acaba de tocar, y se le dejan **5 px
+libres por los cuatro lados**.
+
+El hueco lo da el **`viewBox`, medido**, no un `padding`. El script dibuja el
+icono, mide su caja con `getBBox()` y recoloca el `viewBox` para que el dibujo
+quepa en el hueco con ese margen:
+
+```javascript
+var lado = Math.max(caja.width, caja.height) * ancho / (ancho - 2 * SELLO_LIBRES);
+```
+
+Con un `padding` fijo el hueco es el mismo en unidades del dibujo, y como cada
+icono llena su caja lo que quiere —unos son cuadrados, otros alargados— unos
+saldrían pegados al borde y otros diminutos. Medido: los 14 tipos de icono del
+mapa dan **5,0 px exactos** en los cuatro lados.
+
+**Los iconos propios van dentro del `<svg>`, no en un `<img>`.** Estaban en un
+`<img>` con `object-fit: cover`, que escala la imagen hasta llenar la caja y
+tira lo que sobra: una gota de 105 × 150 en una caja de 52 × 52 perdía la punta
+y la base. Sin ningún error, solo un dibujo al que le faltaban trozos. Dentro
+del SVG el encaje lo hace `preserveAspectRatio` (`xMidYMid meet` por defecto),
+que **nunca recorta**: encaja manteniendo la proporción.
+
+El margen también se respeta con los símbolos de serie, midiendo sus trazos, así
+que un icono estrecho y uno cuadrado acaban con el mismo aire alrededor.
+
+**El icono de la ventana se dibuja con el mismo círculo que tiene en el mapa.**
+Estaba puesto con el círculo forzado, y un icono que en el mapa se ve suelto
+aparecía ahí metido en una caja: parece que el toque abrió otro icono. Media
+medida entre los dos sitios es peor que no hacerla.
+
+### El botón con enlace
+
+Un icono puede llevar un botón que abre una dirección, y sale **dentro de la
+ventana**, debajo del texto. Se configura en el editor con la casilla **Añadir
+un botón con enlace**, que abre los dos campos: el texto del botón y la
+dirección. Va como `u: [texto, dirección]`, igual que la información va como
+`i: [título, texto]`.
+
+**Necesita la información.** El botón vive dentro de la ventana, así que un
+icono con enlace y sin `i` no tiene dónde ponerlo. El servidor lo rechaza en vez
+de guardarlo ignorándolo: un campo que se escribe y no se ve es la peor forma de
+fallar.
+
+**La dirección solo puede ser `http://` o `https://`, y se comprueba en tres
+sitios:** en el editor al escribirla (avisa en la pista), en el servidor al
+guardar y **en el croquis antes de pintarla**. Los tres por el mismo motivo: la
+dirección acaba en un `href`, y un `javascript:` ahí sería una forma de ejecutar
+código en la página de quien mira el mapa. Una dirección sin esquema, como
+`owncloud.rec.uabc.mx`, el navegador la toma por una ruta relativa a esta página
+y no lleva a ninguna parte — sin dar ningún error.
+
+El `<a>` **lo arma el script con `createElement`**, no está escrito en el
+marcado ni se construye con `innerHTML`: la dirección viene del archivo, y así
+el navegador la trata como dirección y no como HTML. Lleva `target="_blank"` y
+`rel="noopener noreferrer"`, porque el destino es ajeno y sin `noopener` esa
+página puede manipular esta desde `window.opener`.
+
+### Las animaciones
+
+Hay siete, y todas se mueven con `transform` y `opacidad`, que el navegador
+compone sin repintar. Son suaves a propósito: esto es un mapa, no un anuncio.
+
+| Nombre | Qué hace | ¿Intensidad? |
+| --- | --- | --- |
+| `late` | El icono crece y vuelve, como un latido | Sí |
+| `flota` | Sube y baja despacio | Sí |
+| `gira` | Da vueltas despacio | No |
+| `brilla` | Aparece y desaparece | Sí |
+| `ondas` | Un anillo que se expande y se desvanece, como un radar | Sí |
+| `vibra` | Tiembla, en diagonal y muy rápido | Sí |
+| `viento` | Se dobla hacia un lado y vuelve, como un árbol con aire | Sí |
+
+**Se aplican a un `<g>` interior, nunca al que lleva la posición.** En SVG el
+`transform` de CSS pisa al atributo `transform`, así que animar el grupo de
+fuera borraría el `translate` que pone el icono en su sitio y todos se
+apilarían en la esquina. Ese grupo interior lleva `transform-box: fill-box` y
+`transform-origin: center` para que giren y latan sobre su propio centro.
+
+**`vibra` y `viento` van más rápidas que las otras a propósito** (0.22 s y
+3.4 s). Son las dos que imitan algo que se mueve solo, y a cámara lenta no se
+reconocen: un temblor lento se lee como un fallo de dibujo y un viento lento
+como un balanceo. El viento, además, tiene los tiempos desiguales —18 %, 42 %,
+66 %, 84 %— porque una racha pareja se lee como un mecanismo.
+
+### El viento pivota en la base
+
+Todas las animaciones giran sobre el centro del icono, **menos el viento, que
+pivota en su base**:
+
+```css
+#iconos .an.viento{animation:icViento 3.4s ease-in-out infinite;
+                   transform-origin:50% 100%}
+```
+
+Es la diferencia entre un árbol y un columpio. Con el pivote en el centro el
+icono se balancea sobre su propio eje, que es lo que hace algo que flota; con
+el pivote abajo, la base se queda clavada y lo que se dobla es la copa.
+
+Son **dos movimientos a la vez**: el `rotate` inclina el icono sobre su base y
+el `skewX` lo dobla por arriba. Con solo el giro queda un palo rígido; con solo
+el sesgo la base también se mueve. Medido con marcadores en el icono: la base
+se desplaza **0**, la mitad **1,9** y la copa **3,9** unidades, o sea el 16 %
+del tamaño del icono. Esa progresión —nada abajo, el doble arriba— es lo que
+se lee como un árbol.
+
+**El `skewX` va en negativo, y eso no es una errata.** Los dos movimientos
+empujan a la copa, pero un `rotate` positivo la manda a la derecha y un
+`skewX` positivo a la izquierda: **se cancelan**. Con los dos positivos la copa
+se movía 0,8 de los 3,9 que le tocaban y el icono se quedaba casi quieto. Los
+grados son más altos que los de las otras animaciones por el mismo motivo: con
+el pivote abajo, el mismo ángulo mueve mucho menos la punta.
+
+Si el sistema pide menos movimiento (`prefers-reduced-motion`), **se siguen
+moviendo, a propósito**.
+
+### Cuando no hace falta animar
+
+Las animaciones son **lo único de esta página que trabaja sin parar**, y eso es
+lo que traba el mapa en un teléfono de gama baja. Lo que se midió en el
+navegador, que es lo que decide el diseño:
+
+| Iconos animando | Coste por fotograma |
+| --- | --- |
+| 0 | **0 fotogramas** — el compositor se apaga |
+| 1 | 1,69 ms |
+| 40 | 2,32 ms |
+
+**El gasto está en el fotograma, no en los iconos.** En cuanto hay una sola
+animación corriendo, el compositor produce un fotograma a la frecuencia de la
+pantalla y no para; cuesta casi lo mismo con un icono que con cuarenta. Y con
+cero no produce ninguno. En un ordenador eso no se nota; en un teléfono de gama
+baja son entre 15 y 30 ms por fotograma de forma continua, y ahí es donde se
+traba: no por un icono de más, sino por no parar nunca.
+
+Por eso lo único que sirve de verdad es **no producir fotogramas cuando no hacen
+falta**, y se para en los cuatro casos en que nadie las mira:
+
+| Cuándo | Cómo | Qué se gana |
+| --- | --- | --- |
+| La página está escondida | `visibilitychange` + `document.hidden` | Todo. Un mapa abierto en una pestaña de fondo no gasta nada |
+| El mapa se está moviendo | `frenaUnRato(800)` al empezar el zoom | El zoom no compite con 44 animaciones por el mismo sitio |
+| El icono quedó fuera de la pantalla | `IntersectionObserver`, clase `.fuera` | Ampliado en un móvil se ven 4 o 5 de los 48; los otros 43 se paran |
+| **El mapa está entero, sin ampliar** | `#m:not(.acercado) .pausa` | **La vista general pasa de 30 fps a 60 fps clavados** |
+
+La cuarta se puso la última, y contradice lo que decía esta misma tabla antes:
+que sin ampliar no se perdía nada por no parar, porque se ve el mapa entero. Se
+ve, sí, pero verlo no es animarlo gratis. Medido en Chromium con la CPU frenada
+ocho veces y densidad 3, que es lo más parecido a un teléfono de gama media que
+se puede tener en un portátil:
+
+| Vista general | Fotograma mediano | Fotogramas de más de 32 ms |
+| --- | --- | --- |
+| Tal cual | 33,3 ms (**30 fps**) | 66 % |
+| Sin animaciones | 16,7 ms (**60 fps**) | 0 % |
+| Con la regla nueva | 16,7 ms (**60 fps**) | 0 % |
+
+El suelo de 0 % confirma lo de arriba: el problema no es que las animaciones sean
+pesadas una a una, sino que **en cuanto hay algo moviéndose** el compositor
+produce un fotograma a la frecuencia de la pantalla sin parar. Y lo que se ve al
+acercar es un icono de veinte píxeles flotando tres, que no se distingue de uno
+parado —al ampliar se vuelven grandes, la animación se ve, y `.acercado` la deja
+correr—.
+
+Lo que se probó y **no** funciona, para que no se repita:
+
+| Arreglo | Vista general | Mapa ampliado |
+| --- | --- | --- |
+| Una capa por icono animado (`will-change: transform` en los 44) | 66 % | 25 % |
+| Una sola capa para todo el mapa | 66 % | 25 % |
+| Las dos cosas juntas | 0 % | **52 %** — peor que antes |
+
+Se para con **`animation-play-state: paused`, no quitando la animación.** La
+diferencia importa: quitar la animación la reinicia desde el principio, así que
+al volver a mirar los iconos darían un salto; pausarla la deja donde estaba. Por
+eso al ampliar las animaciones reanudan por donde iban y no se ve ningún tirón.
+
+La regla de la vista general va al revés que la de `.fuera` por un motivo que ya
+estaba escrito aquí: en iOS el `IntersectionObserver` dice que no hay nada en
+pantalla ni con el mapa entero a la vista, y si esta regla no mirara `acercado`
+el mapa se quedaría callado entero al ampliar.
+El `IntersectionObserver` lleva un `rootMargin` de 160 px para que los iconos
+que asoman por el borde ya estén moviéndose al entrar, en vez de arrancar de
+golpe.
+
+Y `encuadra()` **solo para las animaciones si el encuadre cambia de verdad.** En
+un móvil, `resize` salta cada vez que se esconde o se asoma la barra del
+navegador, y `encuadra()` se llama también ahí: sin esa comprobación, mover el
+dedo por la pantalla dejaría las animaciones congeladas un rato largo sin que
+nada se hubiera movido.
+
+### La intensidad
+
+La clave `m` dice **cuánto** se mueve un icono, no a qué velocidad. Va de 0.2
+a 2.5 y por defecto es 1, que es el movimiento que estaba de antes de que esto
+existiera. Se elige con el deslizador **Intensidad del movimiento**, justo
+debajo del de la animación, en el panel y en el menú de subir una imagen.
+
+El valor no se copia en cada `@keyframes`: viaja en una **variable CSS**
+(`--m`) que cada icono lleva puesta en su grupo de fuera, y los keyframes la
+leen dentro de un `calc()`.
+
+```css
+@keyframes icFlota{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(calc(-1.6px * var(--m, 1)))}}
+```
+
+Así hay **una sola copia de cada animación** para los veintisiete iconos del
+mapa, la paleta, los modelos y la vista previa del menú de subir. Con una copia
+por intensidad serían siete animaciones por cada valor posible, y la primera
+que alguien tocara se quedaría distinta de las demás.
+
+**La variable va en el grupo de fuera, no en el que se anima.** Un `style`
+que solo pone una variable no toca el atributo `transform` de ese mismo
+elemento, así que ahí es donde no estorba; y como las variables se heredan,
+el grupo animado la lee igual. Se omite cuando vale 1: los iconos que no la
+tocan no llenan el archivo de repetir lo de siempre.
+
+**`gira` no tiene intensidad y el servidor la rechaza si se la pones.** Da una
+vuelta completa: no hay nada que ampliar ni que reducir. Para que nadie se
+tropiece con eso, el desplegable la marca como «sin intensidad», el panel apaga
+el control con una explicación, y al elegirla se borra la `m` que tuviera el
+icono, en vez de dejarla escondida para que reviente al guardar.
+
+### Los iconos propios
+
+Además de los símbolos de serie se pueden usar imágenes propias. Van en otro
+bloque, un diccionario de nombre a imagen:
+
+```javascript
+var PROPIOS = {
+  "logo-facultad": "data:image/png;base64,iVBORw0KGgo…"
+};
+```
+
+**Van incrustadas como data URL y no en un archivo aparte** porque el croquis
+tiene que abrirse solo, sin pedirle nada a nadie: es lo que abre un QR escaneado
+en la calle, y hay una prueba que vigila que no cargue nada de fuera. El precio
+es que cada byte pesa dos veces, los datos y el texto base64, así que las
+imágenes de mapa de bits se guardan pequeñas: **160 px de lado** y en PNG.
+
+Los SVG no tienen ese problema: no se reducen, se limpian y se guardan enteros
+(ver más abajo).
+
+Se dibujan recortadas en círculo, con un `clipPath` que vive en `<defs>`, para
+que se lean como iconos del mapa y no como fotos pegadas encima. Como el aro ya
+es redondo, una imagen cuadrada pierde un poco de las esquinas; el editor
+enseña la vista previa con el recorte puesto para que se vea antes de guardar.
+
+Los topes de peso están en `editor/validar.py`: 64 KB por imagen y 800 KB entre
+todas. Con 160 px de lado no se llega ni de lejos, y los topes están para que un
+descuido no convierta la página del móvil en algo que tarda en abrir.
+
+#### Los SVG, que no se pixelan
+
+Un icono propio puede ser un **SVG**. La diferencia no es cosmética:
+
+| | PNG / JPG / WebP | SVG |
+| --- | --- | --- |
+| Cómo se guarda | recortado y reducido a **160 px** de lado | tal cual, solo limpiado y minificado |
+| Al ampliar | se estira y **se pixela** | se ve igual de nítido |
+| Un icono típico | ~13 KB | ~0.6 KB |
+
+Importa porque los iconos del mapa miden 24.4 unidades en un lienzo de 1224, y
+con el zoom se amplían hasta **cuatro veces**. Un PNG de 160 px estirado a 1700
+px se ve borroso; un SVG, perfecto. Y de paso pesa veinte veces menos, que en
+una página que abre un móvil escaneando un QR no es poco.
+
+Por eso al SVG **no se le hace lo mismo**: no se recorta (su `viewBox` ya dice
+cuáles son sus límites) y sobre todo **no se reduce**, porque reducir un vector
+sería destruir justo lo que lo hace bueno. Solo se limpia y se minifica.
+
+En la paleta y en los listados, los vectores llevan el fondo distinto y la
+palabra «vector», para saber cuál es cuál antes de poner uno en un sitio que se
+va a ver de cerca.
+
+#### Qué se le quita a un SVG
+
+Nada de lo que dibuja: las formas, los degradados, los filtros, las máscaras y
+el texto se quedan enteros. Se quitan las cuatro cosas que un icono no puede
+llevar:
+
+| Fuera | Por qué |
+| --- | --- |
+| `<script>` | Un icono no ejecuta código |
+| `<foreignObject>`, `<iframe>`, `<embed>`, `<object>` | Meten otro documento entero dentro |
+| Atributos `on…` (`onclick`, `onload`…) | Son manejadores de eventos |
+| `href` o `url(…)` que apunten a otro sitio | Traen cosas de fuera. Los `url(#degradado)` de dentro se quedan, que son la mayoría |
+
+Si a un `<image>` o un `<use>` se le quita su `href`, el elemento se va con él:
+sin su referencia no dibuja nada, y dejarlo sería un hueco que ocupa sitio en el
+archivo y no se ve.
+
+Cuando se quita algo, el editor lo dice al terminar. Casi siempre significa que
+el archivo venía de un sitio raro, y quien lo sube tiene que enterarse.
+
+> **Aunque el navegador no ejecutaría nada de todas formas.** El SVG se dibuja
+> con `<image href="data:image/svg+xml;…">`, que es contexto de imagen, como un
+> `<img src>`: ahí no corren los scripts, ni se cargan recursos de fuera, ni se
+> aplican hojas de estilo. Un `<script>` dentro del SVG, en ese contexto, es una
+> etiqueta ignorada. La limpieza se hace igual porque el archivo puede acabar
+> abriéndose solo —el data URL se puede copiar y pegar— y porque un SVG que
+> viaja dentro de un documento ajeno no debería llevar según qué. Es barato y no
+> depende de que el navegador cumpla.
+
+Un SVG que no se puede usar se rechaza con el motivo escrito, no con un error
+técnico. Los casos:
+
+- **No es XML bien formado** — no se dibujaría y el navegador no diría nada.
+- **Le falta el `viewBox`, o un ancho y un alto** — sin eso no se sabe qué
+  proporción tiene y el icono sale del tamaño que le apetezca al navegador.
+- **El dibujo de dentro no es un `<svg>`** — pasa cuando el archivo envuelve al
+  SVG de verdad; hay que abrir el de dentro.
+- **Solo llevaba cosas prohibidas** — al limpiarlo no quedó nada.
+- **Pasa del tope de peso** (120 KB, más que los 64 KB de una imagen): un
+  vector pesado sigue siendo nítido y vale la pena, pero un icono de 200 KB
+  suele ser un mapa o una foto convertida a trazados.
+
+También se tolera el `xlink:href` sin declarar `xmlns:xlink`. Un navegador lo
+acepta, pero un lector de XML estricto falla con «unbound prefix»: pasa con
+archivos exportados por programas que se saltan la declaración, y rechazarlos
+sería rechazar SVGs que en el navegador se ven perfectos. Se le añade la
+declaración en vez de quitarle el prefijo, que sería reescribir el dibujo.
+
+#### La biblioteca
+
+Cada imagen que se sube se guarda también en `editor/iconos/`, ya preparada
+—el PNG recortado y reducido, o el SVG limpiado— **junto a un JSON con sus
+ajustes**: el tamaño, la animación, la intensidad y si lleva círculo. Esa carpeta está fuera de
+git y es la despensa del editor: al quitar un icono propio del croquis, la
+imagen **no se pierde**, baja a la lista **Guardados** y se vuelve a poner con un
+clic, sin tener que buscarla otra vez en el disco y **con los mismos ajustes con
+los que se subió**.
+
+Cada fila de **Guardados** lleva una **×** para borrar la imagen de verdad. Es lo
+único del editor que borra algo que no se puede deshacer, así que pregunta
+antes; el botón sale al pasar por encima, porque borrar es raro y recuperar es
+lo de siempre.
+
+El croquis sigue siendo la única fuente de lo que se publica: la biblioteca
+solo sirve para no repetir el trabajo de subir y recortar.
+
+#### El menú al subir una imagen
+
+Al elegir un archivo **no entra directo a la paleta**. Se abre un menú donde se
+elige el nombre, el tamaño, la animación y si lleva círculo, con una **vista
+previa** de la imagen de verdad —recortada, con su círculo y su animación
+puestas— sobre un fondo cuadriculado que deja ver la transparencia.
+
+La imagen original se recorta a lo que no es transparente y se encaja en un
+cuadro, así que hasta verlo no se sabe cómo va a quedar dentro del círculo.
+
+Esos valores **quedan guardados con el icono**: al pulsarlo en la paleta, cada
+clic en el mapa pone uno ya configurado así. Configurar veinte extintores
+iguales es configurarlos una vez y dar veinte clics. Después, cada icono
+colocado se puede cambiar como cualquier otro.
+
+El menú arranca con el **tamaño de los nuevos** que esté puesto en el panel, sin
+animación y con círculo: lo que se estaba usando. Cancelar no deja rastro, y
+mientras se prepara la imagen el botón se apaga y dice «Preparando…», que son
+unos cientos de milisegundos con una imagen grande.
+
+#### Borrar iconos
+
+| Qué | Cómo |
+| --- | --- |
+| Uno del mapa | Elegirlo y **Borrar icono** |
+| Varios del mapa | Marcarlos con Mayús y **Borrar icono**: se van todos |
+| Todos los del mapa | **Borrar los colocados**, con confirmación |
+| Un icono propio del croquis | Pulsarlo en **En el croquis**: baja a Guardados |
+| Una imagen de Guardados | La **×** de su fila, con confirmación |
+
+Los borrados del mapa se deshacen con **Ctrl+Z** (los últimos 20). Se guardan
+copias enteras de la lista de iconos, no diferencias: con un puñado de iconos
+una copia ocupa nada y no hay forma de que el deshacer se desincronice.
+
+**El deshacer es solo para borrados**, a propósito. Mover un icono o cambiarle
+el tamaño se arregla haciéndolo otra vez, y meter eso en la pila haría que
+Ctrl+Z dejara de hacer lo que uno espera cuando lo que quiere es recuperar algo
+que se fue.
+
+### Al reemplazar el mapa por una versión nueva
+
+Se sustituyen dos cosas y nada más:
+
+1. `plantilla/FinalSinCosas.svg` — el póster nuevo, entero y con los dos banners
+   dentro. Siempre de 1224 × 1224 (si cambia el tamaño, hay que cambiar el
+   `viewBox` y el `y` de la pieza).
+2. Los polígonos de `ZONAS` — las coordenadas en puntos, leídas sobre el póster.
+
+El zoom, el encuadre y la ficha se calculan solos. La prueba
+`croquis con zonas coherentes` revisa que cada zona tenga los cuatro campos,
+que quepa en el mapa, que su polígono tenga al menos 3 puntos y 20 pt² de
+área, que la descripción pase de 10 caracteres, que ningún par de zonas se
+solape y que el `<image href>` apunte a un archivo que exista.
+
+Para mover zonas e iconos sin tocar las coordenadas a mano está el editor, que
+es la sección siguiente.
+
+## El editor
+
+Mover once polígonos a mano sobre un archivo de 18 KB es una forma segura de
+romper el croquis. `editor/` es una herramienta aparte para hacerlo con el
+ratón, y es **lo único que puede modificar el mapa**.
+
+```bash
+python editor/editor.py
+```
+
+Abre el navegador en `http://127.0.0.1:8730/` y no necesita nada instalado más
+allá de Python: el servidor es `http.server` de la biblioteca estándar y la
+interfaz es un HTML suelto.
+
+| Se puede hacer | Cómo |
+| --- | --- |
+| Mover una esquina | Arrastrar el punto blanco |
+| Mover una zona entera | Arrastrar su interior |
+| Mover con precisión | Flechas del teclado (con Mayús, de 10 en 10) |
+| Añadir una esquina | Botón **Añadir vértice**, luego clic en el borde |
+| Quitar una esquina | Doble clic sobre el punto, o `Supr` |
+| Poner un icono | Arrastrarlo de la paleta al mapa, o pulsarlo y hacer clic |
+| Ajustar su tamaño | El deslizador **Tamaño**; los nuevos salen con el que diga **Tamaño de los nuevos** |
+| Girarlo | El deslizador **Giro**, o los botones de ±15° y ±90° |
+| Animarlo | El desplegable **Animación** y, si la que se elige la usa, **Intensidad del movimiento** |
+| Quitarle el círculo | La casilla **Con círculo de fondo** |
+| Ponerle información | Los campos de **Información que sale al pulsarlo**; si se dejan vacíos, el icono no se puede pulsar |
+| Abrir un enlace desde el icono | La casilla **Añadir un botón con enlace**. Sale dentro de la ventana, así que el icono necesita información |
+| Guardar el icono entero | **Guardar como modelo** |
+| Poner varios iguales | Pulsar el modelo en **Modelos** y hacer clic en el mapa todas las veces que haga falta |
+| Crear un icono propio | **Subir una imagen…**: se abre el menú donde se elige tamaño, animación, intensidad y círculo. Vale PNG, JPG, WebP, GIF, BMP o **SVG** |
+| Borrar iconos | Ver **Borrar iconos**, más arriba |
+| Deshacer un borrado | `Ctrl+Z` |
+| Volver a poner uno guardado | Pulsarlo en **Guardados** |
+| Quitar un icono propio | Pulsarlo en **En el croquis**; la imagen baja a **Guardados** |
+| Alinear varios | Marcarlos con Mayús y usar **En fila**, **En columna** o **En rejilla** |
+| Acercar | Rueda del ratón, o los botones **+** y **−** |
+
+Abajo a la izquierda del mapa están las mismas instrucciones.
+
+Una nota sobre las dos «Guardados» y «Modelos», que es fácil de confundir:
+
+| | Qué guarda | Para qué |
+| --- | --- | --- |
+| **Guardados** | Una imagen (PNG) | Volver a poner un icono propio sin buscar el archivo |
+| **Modelos** | Un icono configurado entero | Poner muchos iguales de un clic |
+
+### Marcar varios iconos y alinearlos
+
+Con **Mayús + clic** se van marcando iconos, y salen tres formas de colocarlos
+de golpe. Se calculan a partir de donde están ahora: los iconos se ordenan
+según su posición actual y se reparten parejos, así que el resultado es el que
+uno espera sin tener que decir dónde va cada uno.
+
+| Botón | Qué hace |
+| --- | --- |
+| **En fila** | Todos a la misma altura, repartidos en horizontal |
+| **En columna** | Todos a la misma columna, repartidos en vertical |
+| **En rejilla** | En cuadrícula, empezando por arriba a la izquierda |
+
+El hueco entre uno y otro es el mayor entre el reparto exacto y lo que mide el
+icono más grande de los marcados. Con eso casi nunca se tocan; si no caben, se
+quedan pegados, que es mejor que meterlos donde no van. Al final se comprueba
+que el grupo entero quepa en el mapa y, si se sale, se mete hacia dentro de una
+pieza: mover uno solo deformaría la alineación recién hecha.
+
+Los marcados también se mueven juntos: arrastrando uno se van todos, y las
+flechas del teclado los mueven en bloque. Es la forma de cuadrar un grupo al
+milímetro sin pelearse con el ratón.
+
+Las marcas se guardan por posición, así que al borrar un icono se limpian y se
+vuelven a poner: si no, quedarían corridas y marcarían a uno que no es.
+
+### El zoom del editor
+
+La rueda da un paso **continuo**, no un salto fijo por muesca: el factor sale
+de `Math.exp(deltaY × 0.0016)`. Con un ratón, una muesca acerca un 17%; con un
+trackpad, que manda decenas de eventos diminutos, acerca de forma suave. Antes
+cada muesca multiplicaba por 1.18 y el resultado se veía a pasos.
+
+Además, el zoom **no vuelve a dibujar el panel**: la rueda dispara decenas de
+eventos por segundo y `dibuja()` reconstruye el mapa entero *y* las tres listas
+de la derecha. Ahora el zoom solo toca lo que depende de la escala, que es el
+`viewBox`, el radio de los tiradores y el tamaño de las etiquetas
+(`reencuadra()`), y todo lo demás espera a que haya un cambio de verdad. Medido:
+40 eventos de rueda pasaron de 40 redibujados completos a **un solo reencuadre**.
+
+Los eventos se juntan y se aplican **una vez por fotograma**
+(`requestAnimationFrame`), para que un trackpad que manda 100 eventos por
+segundo no dispare 100 encuadres.
+
+### Por qué el croquis público no puede editar nada
+
+Es la razón de que esto sea un programa aparte y no un botón dentro del mapa.
+
+El croquis que abre el QR es un HTML suelto en GitHub Pages: sin servidor, sin
+backend y sin formularios. Quien lo escanea solo puede mirarlo, y una prueba
+(`el croquis publicado no edita nada`) comprueba que siga siendo así.
+
+El editor es lo contrario: escribe archivos y ejecuta `git push`. Por eso:
+
+| Medida | Por qué |
+| --- | --- |
+| Escucha en `127.0.0.1`, no en `0.0.0.0` | Desde otro equipo de la red no se llega |
+| Rechaza peticiones con `Host` que no sea localhost | Una web abierta en este equipo no puede apuntar un dominio a 127.0.0.1 y colarse por el navegador |
+| No sirve archivos por ruta | Solo responde a las direcciones de una lista fija |
+| Valida antes de escribir, y si algo falla no escribe nada | A medias sería peor: el croquis quedaría publicado con la mitad del cambio |
+| `noindex` en la interfaz | Aunque acabe publicada, no aparece en buscadores |
+
+Y si alguien llegara a abrir la interfaz del editor, no podría hacer nada: sin
+el servidor local no hay quien reciba lo que edite. La interfaz sola no escribe
+nada.
+
+### Guardar y subir
+
+**Guardar** valida y reescribe los bloques del croquis. Antes de tocar el
+archivo deja una copia en `editor/_respaldo/croquis.html`, que está fuera de
+git porque git ya guarda todas las versiones.
+
+**Subir a GitHub** hace `git add -A`, `git commit` y `git push` con el mensaje
+que se escriba. Si el push falla (la red, los permisos), el commit ya está
+hecho y el aviso lo dice: se puede reintentar sin perder nada. Después hay que
+esperar uno o dos minutos a que GitHub Pages reconstruya, y el QR ya abre la
+versión nueva.
+
+> **Ojo con el fondo.** GitHub Pages sirve el archivo con
+> `Cache-Control: max-age=600`, así que un cambio en `FinalSinCosas.svg` **tarda
+> diez minutos en verse, recargando inclusive**. Para que no pase, la dirección
+> lleva un `?v=` con el sha1 del archivo: al cambiar el arte hay que subirlo, y
+> una prueba avisa si se te olvida. Los detalles están en la sección del mapa.
+
+### Cómo reescribe el croquis
+
+El croquis lleva marcadores alrededor de los dos bloques que el editor toca:
+
+```javascript
+/* === INICIO ZONAS === */
+var ZONAS = [ … ];
+/* === FIN ZONAS === */
+```
+
+Se usan marcadores y no expresiones regulares sobre el código porque el día
+que alguien reformatee el archivo, una expresión regular falla en silencio o,
+peor, se lleva por delante el bloque de al lado. **Esas dos líneas no se pueden
+borrar**: sin ellas el editor avisa de que no sabe qué trozo reescribir, en vez
+de estropear el croquis.
+
+El contenido de los bloques es JavaScript, pero también es JSON válido: un
+array de números y textos con comillas dobles. Así que se lee con `json.loads`
+en vez de con expresiones regulares, y un error de sintaxis se convierte en un
+mensaje claro en lugar de en un croquis a medias.
+
+La paleta de iconos no lleva su propia copia de los dibujos: el servidor los
+lee del bloque `SIMBOLOS` del croquis y se los manda a la interfaz. Lo que se
+ve en la paleta es exactamente lo que el croquis va a dibujar.
+
+## Nota sobre el minificador
+
+`generar_qr.py` incluye un minificador propio para no depender de herramientas
+externas. Conserva a propósito lo que suele romperse al comprimir:
+
+- El contenido de `<style>`, `<script>`, `<pre>` y `<textarea>`
+- Las comillas de los atributos con texto o manejadores (`onclick="f('a')"`)
+- El doctype y el `charset`, sin los cuales el texto sale con acentos rotos
+
+## Trampas del navegador que ya están resueltas
+
+Están documentadas porque son fáciles de volver a tropezar al reescribir el
+croquis o la página base:
+
+- **`atob` solo acepta base64 estándar**, no base64url. Como el fragmento se
+  genera con `-` y `_`, el decodificador los traduce a `+` y `/` antes de
+  llamar a `atob`. Sin eso: `InvalidCharacterError`.
+- **En SVG, `el.className = "x"` no hace nada**: es un `SVGAnimatedString` de
+  solo lectura. Hay que usar `setAttribute("class", …)` o `classList`, o la
+  clase nunca se aplica y el elemento no cambia de aspecto.
+- **Un `<svg>` sin `viewBox` no escala**: dibuja 1 unidad por píxel y se
+  recorta. El `viewBox` va en el marcado, no sólo en el zoom por JavaScript.
+- **Cambiar sólo el `#` no recarga el documento.** Por eso la página base
+  escucha `hashchange`; si no, escanear un segundo QR con la página ya abierta
+  la deja en blanco.
+- **`document.write` se come la página base.** Hay que meter el documento en un
+  `iframe` con `srcdoc`; si no, el aviso de error desaparece al primer escaneo
+  correcto y no hay forma de mostrarlo después.
+- **`overflow:hidden` en `html,body` de la página base**: con el iframe fijo, el
+  padding del `body` desborda y aparece un scrollbar que no corresponde.
+- **La URL completa ronda los 2100 caracteres** porque el fragmento va dentro.
+  Chrome y Safari manejan esas longitudes, pero si un lector concreto se
+  trunca, hay que bajar el documento (menos texto o menos zonas) y regenerar.
+- **Un cierre de más o de menos en el `<script>` deja la página en blanco.** No
+  se dibujan ni las zonas ni los iconos, y lo único que sale es un
+  `Unexpected token` en la consola del navegador. Pasó al añadir el círculo
+  opcional: un `)` de más en una función de tres líneas tumbó el mapa entero.
+  La prueba `el javascript cuadra` no valida JavaScript, cuenta cierres: no
+  entiende la sintaxis, pero caza el error de tecleo que más veces deja estos
+  archivos muertos, y lo caza antes de abrir el navegador.
+- **Un `if` mal anidado deja código muerto que parece vivo.** Al partir la
+  validación de un icono en una función aparte, las comprobaciones de después
+  se quedaron con la indentación del bucle que ya no existía, o sea dentro de
+  un `if` de tres líneas. El resultado: `revisar_iconos` no comprobaba **nada**
+  y devolvía la lista vacía, así que el editor aceptaba cualquier cosa. Y la
+  prueba que lo vigilaba seguía en verde, porque mandaba las zonas vacías: el
+  guardado rebotaba por «no hay ninguna zona» y parecía que había rechazado el
+  icono. Dos lecciones: la prueba tiene que comprobar **por qué** falla y no
+  solo que falle, y las reglas compartidas necesitan una prueba que las llame
+  directamente, sin pasar por el servidor.
+- **`0` no es «no está».** El círculo se apaga con `"c": 0`, así que hay que
+  comprobarlo con `"c" in ic` y nunca con `if ic.get("c")`, que tomaría el cero
+  por ausencia y dejaría el círculo puesto. Lo mismo al leerlo en el croquis.
+- **`pointer-events: auto` no basta para una forma sin pintar.** El valor
+  `auto` equivale a `visiblePainted`, que exige que la forma tenga relleno o
+  trazo pintado; para una superficie invisible hay que usar `fill` o `all`.
+  Y devolverle el `pointer-events` a un `<g>` no sirve de nada, porque un `<g>`
+  no tiene forma propia: el toque lo tiene que recoger un hijo. Los dos
+  errores juntos dejaban los iconos sin aro del croquis **sin poder pulsarse**,
+  y como el mapa deshace el zoom al tocarlo, el síntoma era «el icono no hace
+  nada» en vez de un error.
+- **`rotate` y `skewX` con el mismo signo se cancelan.** En el viento del
+  croquis, un `rotate` positivo manda la copa a la derecha y un `skewX` positivo
+  a la izquierda: el icono se quedaba casi quieto (medido: 0,8 de los 3,9 que le
+  tocaban) sin ningún error. Para que sumen hay que ponerlos con signos
+  distintos. Cuando dos transformaciones «van en la misma dirección» por su
+  nombre, hay que medirlo: la matriz del navegador dice la verdad y la
+  intuición no.
+- **Para medir un `transform` con `getComputedStyle` hay que resolver el
+  origen a mano.** La matriz que devuelve el navegador NO incluye el
+  `transform-origin`: el navegador aplica
+  `translate(o) · M · translate(-o)`. Y para `transform-box: fill-box` el
+  origen viene en píxeles del propio recuadro del elemento, así que el punto
+  `(ox, oy)` del origen es el que se queda quieto. Medir posiciones en pantalla
+  no sirve: el zoom y el paneo del mapa las mueven y el ruido tapa la señal
+  (una medición dio 54 px de «movimiento» que era el mapa reencuadrándose).
+- **`object-fit: cover` recorta, y en un icono eso se nota.** Escala la imagen
+  hasta llenar la caja y tira lo que sobra. Una gota de 105 × 150 en una caja
+  de 52 × 52 perdía 22 px de alto: la punta y la base. Sin ningún error, solo un
+  dibujo al que le faltaban trozos. Para un icono se quiere `contain`, o mejor
+  meterlo en un `<svg>` y dejar que el `preserveAspectRatio` lo encaje, que
+  además permite medirlo.
+- **Un `padding` no sirve para dar aire a un dibujo de tamaño desconocido.** El
+  padding se mide en unidades propias del contenedor, así que deja el mismo
+  hueco a un icono cuadrado que a uno alargado: unos salen pegados y otros
+  diminutos. Lo que se quiere es medir el dibujo con `getBBox()` y recolocar el
+  `viewBox`, que se mide en unidades del dibujo.
+- **`getBBox()` no mide nada con el elemento en `display:none`.** Devuelve ceros
+  o lanza. Si el cálculo depende de esa medida, hay que quitar el `hidden`
+  antes de medir, no después.
+- **Centrar con `place-items: center` esconde lo que sobra por arriba.** En un
+  contenedor con scroll, el contenido más alto que la caja se sale por el borde
+  de arriba y **no se puede alcanzar con el dedo**, porque el scroll solo llega
+  hacia abajo. `align-items: safe center` lo pega al borde en ese caso, y si el
+  navegador no lo entiende se queda con el `center` de la línea anterior.
+- **Una animación continua cuesta por fotograma, no por elemento.** Medido:
+  con 1 icono animado el compositor ya produce un fotograma cada vez que la
+  pantalla se refresca, y cuesta 1,69 ms; con 40, 2,32 ms. Con cero, no produce
+  ninguno. Así que añadir o quitar animaciones apenas cambia el gasto: lo que lo
+  cambia es **dejar de producir fotogramas**. En un móvil de gama baja eso es la
+  diferencia entre ir fluido y trabarse, y no se ve en ninguna parte: hay que
+  medirlo con una traza del compositor, porque el hilo principal está ocioso y
+  un `requestAnimationFrame` normal sigue dando 60 fps aunque el compositor no
+  llegue.
+- **Parar una animación no es quitarla.** `animation: none` la reinicia desde el
+  principio, así que al reanudar el elemento da un salto. `animation-play-state:
+  paused` la deja donde estaba y sigue por ahí.
+- **`resize` salta mucho más de lo que parece en un móvil.** Cada vez que se
+  esconde o se asoma la barra del navegador. Si algo caro se dispara desde
+  `resize`, hay que comprobar antes que el resultado cambie de verdad, o se
+  dispara con cada movimiento del dedo.
+- **Una regla de accesibilidad puede no hacer nada y parecer que sí.**
+  `@media (prefers-reduced-motion:reduce){ #iconos .an{animation:none} }` no
+  paraba nada: las reglas que dan animación a cada clase (`#iconos .an.late`)
+  tienen más fuerza que una que solo nombre el grupo y empatan con ella, así que
+  ganaban ellas. Estuvo así desde que existen las animaciones y no se notó
+  nunca porque no da ningún error.
+- **Pero al arreglarla con `!important` se apagó el mapa entero.** En un equipo
+  con el ajuste puesto —que es lo normal en Windows si están desactivados los
+  «efectos de animación»— no se movía ni un icono ni una línea, y el síntoma se
+  leía como «la animación no funciona» en vez de «el sistema la está tapando».
+  Se quitó a propósito: **aquí las animaciones las elige una por una quien
+  edita y son contenido, no adorno de fondo**, así que un ajuste del sistema no
+  debe borrarlas. Hay una prueba que impide que vuelva sin querer.
+- **`calc()` con una variable no se interpola en `stroke-dashoffset`.** El
+  cálculo da un número sin unidad y el navegador lo trata como valor discreto:
+  salta de un extremo al otro en vez de recorrerlos, así que los guiones
+  parpadean en el sitio en vez de avanzar. **Hay que añadir `* 1px`** para que
+  el resultado sea una longitud de verdad. Medido: 2 valores distintos sin la
+  unidad, 34 con ella. Y no da ningún error: la animación figura como corriendo
+  y el valor final es el correcto.
+- **Un `[^)]*` en una expresión regular se para en el primer paréntesis.** Para
+  comprobar texto como `calc(-16 * var(--m, 1) * 1px)` hay un `var(...)` dentro
+  y el patrón no llega al final. Cuando el texto lleva paréntesis anidados,
+  conviene comprobar con `in` en trozos en vez de con una expresión regular.
+- **Dos reglas con la misma fuerza las decide el orden, y eso es una trampa.**
+  La regla que pausa las animaciones (`.frenado`) tiene la misma fuerza que las
+  que animan cada clase. Puesta antes de las de las zonas, las de las zonas
+  ganaban y el mapa seguía animándose durante el zoom aunque los iconos ya
+  estuvieran parados. Sin ningún error: solo un teléfono que se sigue trabando.
+  Cuando la posición de una regla importa, hay que escribir al lado por qué.
+- **Un `calc()` con una variable dentro de `stroke-dasharray` funciona** en
+  Chrome, y la clave es que el desplazamiento y el patrón usen la misma cuenta:
+  `dasharray: calc(9 * var(--m)) calc(7 * var(--m))` con
+  `dashoffset: calc(-16 * var(--m))`. Si los dos números se separan, el bucle
+  da un salto en cada vuelta.
+- **Un recurso con la misma dirección y contenido nuevo no se ve.** GitHub
+  Pages sirve el fondo con `Cache-Control: max-age=600`, así que al cambiar
+  `FinalSinCosas.svg` el navegador **y el CDN** siguen enseñando la copia vieja
+  durante diez minutos, aunque se recargue. El fallo se lee como «no se subió el
+  cambio» o «se subió mal», y no hay ningún error en ninguna parte: el servidor
+  tiene el archivo nuevo y lo que pasa es que nadie lo pide. La solución es que
+  la dirección cambie con el contenido — `FinalSinCosas.svg?v=<sha1 corto>` — y que
+  una prueba compare ese número con el sha1 de verdad, porque un número que se
+  queda viejo falla exactamente igual de callado.
+- **Un salto de línea de más en un comentario rompe el archivo entero.** En
+  `editor.html`, un texto de ayuda quedó partido en dos líneas en medio de un
+  `//`, así que la segunda mitad quedó como código suelto: error de sintaxis, el
+  script no se ejecuta y **el editor sale con todos los paneles vacíos**. No hay
+  error visible en la página. Se detecta mirando la consola del navegador, o
+  comprobando que existan las funciones nuevas (`typeof window.miFuncion`).
+- **Una casilla que no guarda nada por sí sola se desmarca sola.** Los campos
+  del botón con enlace necesitan texto Y dirección antes de guardar nada, así
+  que en cuanto el foco salía de la casilla para escribir en los campos, el
+  repintado del panel la devolvía a lo que decía el icono y la apagaba. Hay que
+  mirar si el foco está en **cualquiera** de los campos del bloque, no en la
+  casilla: `[casilla, texto, url].indexOf(document.activeElement) >= 0`.
+- **Un mensaje partido en varias líneas no se encuentra con `find`.** Los
+  mensajes del validador están concatenados para no pasar de ancho, así que la
+  frase completa no aparece en el archivo. Al comprobar texto hay que buscar un
+  trozo corto que quepa en una línea, o unir las líneas antes.
+- **Una variable CSS sí funciona dentro de un `@keyframes`.** Lo natural es
+  pensar que no, porque en un keyframe no hay cascada que valga; pero el
+  `calc()` se resuelve con el valor que la variable tiene **en ese elemento**,
+  y como las variables se heredan, basta con ponerla en un grupo de fuera.
+  Comprobado midiendo: el mismo keyframe da 0.32 px de recorrido con `--m: 0.5`,
+  0.64 px con 1 y 1.27 px con 2. Sin eso habría que duplicar los siete
+  keyframes por cada valor de intensidad.
+- **Un `style` que solo pone una variable no pisa el `transform`.** Es la razón
+  de que la intensidad pueda ir en el mismo grupo que lleva la posición: el
+  atributo `transform` y la propiedad `--m` no se estorban. Poner `style`
+  también con `transform` sí borraría la posición, que es el fallo clásico de
+  este mapa.
+- **Una prueba que escribe archivos tiene que apuntar a una carpeta temporal.**
+  Las de la biblioteca y los modelos usan `tempfile` y restauran la constante
+  en un `finally`. Una que escribía en `editor/iconos/` de verdad pisó una
+  imagen guardada y luego la borró: los datos de quien edita no son un campo de
+  pruebas.
+- **Un atributo HTML sin comillas se traga la `/` que cierra la etiqueta.**
+  `fill=#16241c/>` se parsea como `fill="#16241c/"`, la etiqueta nunca se
+  cierra y se traga todo el dibujo: el mapa sale negro y **sin ningún error en
+  la consola**. Hay que dejar un espacio: `fill=#16241c />`. La prueba
+  `atributos sin comillas no se tragan` lo vigila.
+- **Y su hermano: cerrar la etiqueta sin cerrar antes la comilla del
+  atributo.** Al escribir el `transform` de los iconos quedó
+  `')><title>'` en vez de `')"><title>'`. Falta la comilla, así que el
+  navegador se traga media etiqueta, el atributo se queda con basura dentro y
+  el elemento no se dibuja. En el croquis eso deja el mapa sin iconos y solo
+  se ve un error en la consola, que nadie mira. **Pasó dos veces.**
+  La primera prueba que lo vigilaba miraba cada trozo entrecomillado por su
+  cuenta, y no bastaba: los trozos van encadenados con `+`, y la comilla que
+  falta puede estar al final de un trozo y el `>` al principio del siguiente,
+  con lo que ninguno de los dos tiene el rastro completo. Ahora la prueba
+  (`etiqueta sin comilla de cierre`) pega los trozos de cada `return` como los
+  pegaría el navegador y mira el resultado. Comprobado que falla de verdad
+  metiendo el fallo a mano.
+- **`.split()` aplicado a un texto concatenado con `+` solo afecta al último
+  trozo.** `var Z="a"+"b".split(";")` deja `Z` como texto, no como array:
+  `Z.length` da el número de caracteres, el bucle dibuja un grupo por carácter
+  y todas las coordenadas salen `NaN`. Tampoco falla la consola. Por eso las
+  zonas van en un **array literal**, que no tiene esa trampa.
+- **`elemento.children` incluye los elementos del fondo.** Si el fondo y las
+  zonas comparten `<g>`, los índices quedan desplazados y el toque activa la
+  zona equivocada. Por eso el código busca con `querySelectorAll(".g")`, que
+  selecciona solo las zonas, y no con `children`.
+- **Quitar comillas para ahorrar bytes es un arma de doble filo.** Ahorró 28
+  bytes, pero provocó dos bugs silenciosos. Mide cada recorte.
+- **`getScreenCTM()` tiene dos escalas distintas:** `a` para el eje X y `d` para
+  el Y. Usar `a` en el eje Y hace que la zona salga descentrada al ampliar.
+- **Centrar en el `svg` entero no basta si hay una ficha encima.** El centro
+  útil es el del área que deja la ficha: `(alto - altoFicha) / 2`. Si no, la
+  zona queda medio tapada.
+- **En un zoom, "tocar el fondo para volver" casi nunca funciona**, porque la
+  zona ampliada ocupa la pantalla entera. La condición correcta es mirar si ya
+  hay una zona activa, no si el toque cayó en el fondo.
+- **`getBoundingClientRect()` durante una transición devuelve la posición
+  intermedia, no la final.** Medir justo después de disparar la animación da
+  números falsos: parece que las zonas se salen de la pantalla cuando en
+  realidad todavía van en camino. Hay que esperar a que la transición termine
+  (0.3s aquí) antes de medir.

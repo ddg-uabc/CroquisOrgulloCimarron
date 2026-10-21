@@ -1,0 +1,1458 @@
+# -*- coding: utf-8 -*-
+"""
+Editor local del croquis. Es el unico que puede modificar el mapa.
+
+POR QUE EXISTE ESTE ARCHIVO
+---------------------------
+El croquis que se publica en GitHub Pages es un HTML suelto, sin servidor y
+sin backend: quien lo abre solo puede mirarlo. Eso no se toca. Lo que hace
+falta es una herramienta aparte, para la persona que organiza el evento, que
+pueda mover las zonas y los iconos sin editar el HTML a mano.
+
+Esta es esa herramienta, y vive en tu maquina:
+
+  - Escucha solo en 127.0.0.1, no en la red. Desde otro equipo no se llega.
+  - Rechaza las peticiones cuyo Host no sea localhost, para que una pagina
+    web abierta en este equipo no pueda apuntar un dominio a 127.0.0.1 y
+    colarse por el navegador.
+  - No sirve archivos por ruta: solo responde a las direcciones de la lista.
+  - Nada de esto se sube a GitHub Pages. Lo que se publica es croquis.html,
+    que es solo lectura.
+
+Si el archivo del editor acabara publicado por accidente, no pasaria nada
+grave: no puede escribir en el croquis sin este servidor, y el servidor solo
+existe mientras tu lo tengas abierto.
+
+USO
+---
+    python editor/editor.py            (abre el navegador solo)
+    python editor/editor.py --no-abrir
+    python editor/editor.py --puerto 8730
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import io
+import json
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import threading
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent
+CROQUIS = RAIZ / "plantilla" / "croquis.html"
+# El fondo del croquis, que es el poster entero en una sola pieza. Solo se usa
+# como valor de reserva: lo de verdad sale del `<image>` del propio croquis, y
+# asi el editor no puede ensenar un fondo que el croquis no tenga.
+MAPA = RAIZ / "plantilla" / "FinalSinCosas.svg"
+EDITOR_HTML = Path(__file__).resolve().parent / "editor.html"
+# La version 2 del editor, en su propia ruta. Vive aparte a proposito, y no
+# sustituye a la anterior: los dos escriben en el mismo croquis, asi que abrir
+# los dos a la vez es pedir que uno se pise al otro al guardar. Cada uno en su
+# pestana y ya.
+EDITOR_V2_HTML = Path(__file__).resolve().parent / "editor-v2.html"
+RESPALDO = Path(__file__).resolve().parent / "_respaldo"
+# Los PNG ya preparados, uno por icono propio. Es lo que permite volver a
+# poner un icono que se quito del mapa sin tener que buscar otra vez la imagen
+# original: la que se subio ya no esta en ningun sitio, asi que se guarda aqui.
+BIBLIOTECA = Path(__file__).resolve().parent / "iconos"
+
+# Los modelos: iconos guardados enteros, con su tamano, su giro, su animacion
+# y su informacion, listos para estampar varios iguales de un clic.
+#
+# Viven en un archivo aparte y NO dentro del croquis. El croquis solo lleva lo
+# que se ve en el mapa, y un modelo no se ve: es la plantilla con la que se
+# hacen los iconos. Meterlos ahi engordaria la pagina que abre el QR con datos
+# que el movil no usa.
+MODELOS = Path(__file__).resolve().parent / "modelos.json"
+
+# validar.py vive junto a este archivo, pero cuando el proyecto se importa
+# desde fuera (test_qr.py lo hace) el paquete se llama editor. Se admiten las
+# dos formas para que funcione igual ejecutado que importado.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from validar import (  # noqa: E402  (va despues del sys.path a proposito)
+    ALTO,
+    ANCHO,
+    ANIMACIONES,
+    ANIMACIONES_BORDE,
+    ANIMACIONES_SIN_INTENSIDAD,
+    ANIMACIONES_ZONA,
+    CARPETA_RECURSOS,
+    ESCALA_NULA,
+    EXTENSIONES_IMAGEN,
+    GROSOR,
+    INTENSIDAD,
+    MAX_BOTON,
+    MAX_GROSOR,
+    MAX_ICONO,
+    MAX_ICONOS_PROPIOS,
+    MAX_INTENSIDAD,
+    MAX_MODELOS,
+    MAX_NOMBRE_MODELO,
+    MAX_OPACIDAD,
+    MAX_REDONDEO,
+    MAX_ROT,
+    MAX_TAM_ICONO,
+    MAX_TEXTO,
+    MAX_TITULO,
+    MAX_URL,
+    MAX_VECTOR,
+    MIN_GROSOR,
+    MIN_INTENSIDAD,
+    MIN_OPACIDAD,
+    MIN_ROT,
+    MIN_TAM_ICONO,
+    NOMBRE_PROPIO,
+    OPACIDAD,
+    SENTIDOS_CAMINA,
+    SIMBOLOS,
+    es_recurso,
+    limpiar_adornos,
+    limpiar_ajustes,
+    limpiar_enlace,
+    revisar,
+    revisar_ajustes,
+    revisar_modelos,
+)
+import vector  # noqa: E402  (los iconos en SVG)
+
+# Los archivos que se pueden enlazar desde un boton del croquis: el programa
+# del evento, una guia, un plano. Viven en la raiz del repositorio y se suben
+# con git como cualquier otra cosa; aqui solo se leen para poder ofrecerlos.
+RECURSOS = RAIZ / CARPETA_RECURSOS
+
+# ---------------------------------------------------------------------------
+# La huella del codigo
+# ---------------------------------------------------------------------------
+# El servidor carga los .py UNA vez, al arrancar. Si despues se editan, el
+# proceso que sigue respondiendo es el viejo, y desde fuera no hay forma de
+# notarlo: la pagina se sirve nueva del disco, asi que todo parece al dia
+# mientras las reglas que deciden el guardado son las de antes.
+#
+# Paso de verdad con el redondeo de las esquinas: se anadio al editor, el que
+# estaba abierto no conocia la clave, la tiro en silencio al limpiar los
+# adornos y el archivo salio sin ella. Lo que llegaba a GitHub eran las zonas
+# sin redondear y no hubo un solo error por ningun lado. Es el fallo mas caro
+# que puede tener esta herramienta, porque lo perdido no se puede recuperar:
+# nadie sabe que se perdio.
+#
+# Se guarda la huella con la que arranco el proceso y se compara con la que hay
+# en el disco. Si no cuadran, la pagina avisa y no deja guardar hasta reiniciar.
+def huella_del_codigo() -> str:
+    """El sha1 de los .py del editor, que son los que deciden como se guarda."""
+    h = hashlib.sha1()
+    for ruta in sorted(Path(__file__).resolve().parent.glob("*.py")):
+        h.update(ruta.name.encode("utf-8"))
+        h.update(ruta.read_bytes())
+    return h.hexdigest()[:12]
+
+
+HUELLA_ARRANQUE = huella_del_codigo()
+
+HOSTS_LOCALES = {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+# Lo que mide un icono propio, en pixeles de lado. Con 160 px sobra para la
+# pantalla de un movil, incluso acercando, y mantiene la imagen en unos pocos
+# KB: cada byte acaba dos veces en el croquis, una en los datos y otra en el
+# texto base64.
+LADO_ICONO = 160
+
+
+class ErrorEditor(Exception):
+    """Un problema que se le puede contar a quien esta usando el editor."""
+
+
+# ---------------------------------------------------------------------------
+# Lectura y escritura del croquis
+# ---------------------------------------------------------------------------
+# El croquis lleva marcadores alrededor de los dos bloques que el editor
+# reescribe. Se usan marcadores y no expresiones regulares sobre el codigo
+# porque el dia que alguien reformatee el archivo, una expresion regular
+# falla en silencio o, peor, se lleva por delante el bloque de al lado.
+def _marcadores(nombre: str) -> tuple[str, str]:
+    return f"/* === INICIO {nombre} === */", f"/* === FIN {nombre} === */"
+
+
+def _tramos(texto: str, nombre: str) -> tuple[int, int, str]:
+    """Posicion del bloque y su contenido, marcadores aparte."""
+    ini, fin = _marcadores(nombre)
+    a = texto.find(ini)
+    b = texto.find(fin)
+    if a < 0 or b < 0:
+        raise ErrorEditor(
+            f"No encuentro los marcadores de {nombre} en {CROQUIS.name}.\n"
+            f"Tienen que estar estas dos lineas, y no se pueden borrar:\n"
+            f"    {ini}\n    {fin}")
+    if b < a:
+        raise ErrorEditor(f"Los marcadores de {nombre} estan al reves.")
+    return a, b, texto[a + len(ini):b]
+
+
+def _valor(cuerpo: str, nombre: str):
+    """El array de dentro del bloque, leido como JSON.
+
+    El bloque es JavaScript, pero un array de numeros y textos con comillas
+    dobles es JSON valido, asi que se lee con json en vez de con expresiones
+    regulares. Un fallo de sintaxis aqui se convierte en un mensaje claro en
+    lugar de en un croquis a medias.
+    """
+    a, b = cuerpo.find("["), cuerpo.rfind("]")
+    if a < 0 or b < a:
+        raise ErrorEditor(f"El bloque de {nombre} no tiene ningun array dentro.")
+    return _json(cuerpo[a:b + 1], nombre)
+
+
+def _objeto(cuerpo: str, nombre: str):
+    """El objeto de dentro del bloque, leido como JSON. Para PROPIOS."""
+    a, b = cuerpo.find("{"), cuerpo.rfind("}")
+    if a < 0 or b < a:
+        raise ErrorEditor(f"El bloque de {nombre} no tiene ningun objeto dentro.")
+    return _json(cuerpo[a:b + 1], nombre)
+
+
+def _json(trozo: str, nombre: str):
+    try:
+        return json.loads(trozo)
+    except json.JSONDecodeError as e:
+        raise ErrorEditor(
+            f"El bloque de {nombre} no se puede leer como JSON: {e}.\n"
+            f"Si lo has editado a mano, revisa comas y comillas.") from None
+
+
+# El tipo de contenido de una imagen, por su extension. El fondo puede ser un
+# SVG o un JPG segun lo que use el croquis, y mandarlo con el tipo equivocado
+# hace que el navegador no lo pueda pintar: la pestaña sale con el mapa sin
+# fondo y sin un solo error en la consola.
+TIPOS_IMAGEN = {
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".avif": "image/avif",
+    ".bmp": "image/bmp",
+}
+
+
+def tipo_de_imagen(ruta: Path) -> str:
+    return TIPOS_IMAGEN.get(ruta.suffix.lower(), "application/octet-stream")
+
+
+def archivo_mapa() -> Path:
+    """El arte que usa el croquis, leido del propio croquis.
+
+    Se busca el `<image id="arte">` y se quita el `?v=` del final, que es solo
+    para romper la cache. Asi el editor ensena EXACTAMENTE el mismo fondo que
+    el croquis publicado, aunque cambie de nombre o de formato (SVG o JPG), sin
+    tocar este archivo nunca mas. Si no se encuentra o no esta en el disco, se
+    cae al de reserva.
+    """
+    try:
+        texto = CROQUIS.read_text(encoding="utf-8")
+    except OSError:
+        return MAPA
+    m = re.search(r'<image id="arte"[^>]+href="([^"?]+)', texto)
+    if m:
+        ruta = CROQUIS.parent / m.group(1)
+        if ruta.is_file():
+            return ruta
+    return MAPA
+
+
+def _num_atributo(tag: str, atributo: str, defecto: float) -> float:
+    m = re.search(r"(?:^|\s)" + re.escape(atributo) + r'="(-?[\d.]+)"', tag)
+    return float(m.group(1)) if m else defecto
+
+
+def leer_croquis() -> dict:
+    """Las zonas, los iconos y el encuadre por defecto que hay ahora mismo."""
+    if not CROQUIS.is_file():
+        raise ErrorEditor(f"No existe {CROQUIS}.")
+    texto = CROQUIS.read_text(encoding="utf-8")
+    _, _, cuerpo_zonas = _tramos(texto, "ZONAS")
+    _, _, cuerpo_iconos = _tramos(texto, "ICONOS")
+    _, _, cuerpo_propios = _tramos(texto, "PROPIOS")
+    vista = re.search(r"var VISTA = \[([-\d,\s]+)\]", texto)
+    # El fondo. Se busca el `<image>` que se llama `arte` y no el primero que
+    # sale: antes el primer `<image>` del documento era el banner de arriba, y el
+    # editor acababa enseñando un banner en la pestana del mapa. Con una sola
+    # pieza ya no hay duda, pero el nombre sigue siendo el que dice que es.
+    mapa = re.search(r'<image id="arte"[^>]+href="([^"?]+)', texto)
+    # La colocacion del arte en el lienzo, tal cual esta en el croquis. El
+    # editor coloca el fondo con estos mismos numeros: con el poster de una
+    # sola pieza el mapa no empieza en 0 sino un poco mas abajo, debajo del
+    # banner de arriba, y estirar el poster entero al hueco del mapa dejaria
+    # las zonas y los iconos fuera de sitio respecto al dibujo.
+    arte = re.search(r'<image id="arte"([^>]*)>', texto)
+    caja_arte = None
+    if arte:
+        caja_arte = {"x": _num_atributo(arte.group(1), "x", 0),
+                     "y": _num_atributo(arte.group(1), "y", 0),
+                     "w": _num_atributo(arte.group(1), "width", ANCHO),
+                     "h": _num_atributo(arte.group(1), "height", ALTO)}
+    # El boton del croquis. Se busca con una expresion y no con los marcadores
+    # a proposito: asi tambien se lee en un croquis guardado antes de que el
+    # bloque existiera, y en ese caso sale sin boton en vez de dar un error.
+    enc = re.search(r"var ENLACE = (null|\{[^\n]*\});", texto)
+    enlace = None
+    if enc and enc.group(1) != "null":
+        enlace = _json(enc.group(1), "ENLACE")
+    return {
+        "zonas": _valor(cuerpo_zonas, "ZONAS"),
+        "iconos": _valor(cuerpo_iconos, "ICONOS"),
+        "propios": _objeto(cuerpo_propios, "PROPIOS"),
+        "enlace": enlace,
+        "vista": [int(v) for v in vista.group(1).split(",")] if vista else [0, 0, ANCHO, ALTO],
+        "mapa": mapa.group(1) if mapa else "FinalSinCosas.svg",
+        "arte": caja_arte,
+    }
+
+
+def leer_recursos() -> list:
+    """Los archivos que hay en RecursosExtra, para poder elegirlos.
+
+    De cada uno interesan dos cosas: el nombre, que es lo que se guarda en el
+    croquis, y si es una imagen, porque de eso depende que al pulsarlo se abra
+    una vista previa o se descargue. Se decide aqui y no en el croquis para que
+    las dos partes no puedan opinar distinto.
+
+    Un archivo que no pase `es_recurso` se salta: el editor no puede ofrecer
+    algo que luego el guardado rechazaria.
+    """
+    if not RECURSOS.is_dir():
+        return []
+    salida = []
+    for ruta in sorted(RECURSOS.iterdir(), key=lambda r: r.name.lower()):
+        if not ruta.is_file() or ruta.name.startswith("."):
+            continue
+        if not es_recurso(f"{CARPETA_RECURSOS}/{ruta.name}"):
+            continue
+        salida.append({
+            "n": ruta.name,
+            "kb": max(1, round(ruta.stat().st_size / 1024)),
+            "imagen": ruta.suffix.lower().lstrip(".") in EXTENSIONES_IMAGEN,
+        })
+    return salida
+
+
+def formas_simbolos() -> dict:
+    """Las formas SVG de los iconos, leidas del propio croquis.
+
+    El editor dibuja la paleta con esto y no con una copia propia, para que no
+    haya dos listas de iconos: lo que se ve en la paleta es exactamente lo que
+    el croquis va a dibujar.
+
+    Los simbolos estan escritos como trozos de texto encadenados con +, para
+    que las lineas no se hagan kilometricas. Aqui se vuelven a pegar. Si
+    alguien reformatea ese bloque y la lectura falla, se avisa en vez de
+    dejar la paleta vacia sin decir por que.
+    """
+    texto = CROQUIS.read_text(encoding="utf-8")
+    _, _, cuerpo = _tramos(texto, "SIMBOLOS")
+    formas = {}
+    for clave, trozos in re.findall(
+            r"^\s*(\w+):\s*((?:\s*'[^']*'\s*\+?)+)", cuerpo, flags=re.M):
+        formas[clave] = "".join(re.findall(r"'([^']*)'", trozos))
+    if not formas:
+        raise ErrorEditor(
+            "No se pudo leer ningun simbolo del bloque SIMBOLOS de croquis.html.\n"
+            "Cada uno tiene que verse asi, en una linea que empiece por su nombre:\n"
+            "    bano: '<circle .../>' + '<path .../>',")
+    return formas
+
+
+def tipos_coinciden(formas: dict) -> list[str]:
+    """Avisa si la lista de simbolos del croquis y la de validar.py se separaron.
+
+    Son dos listas que tienen que decir lo mismo: validar.py decide que tipos
+    se pueden guardar y croquis.html sabe dibujarlos. Si se separan, se puede
+    guardar un icono que luego no se dibuja, y eso no da ningun error.
+    """
+    faltan_en_croquis = sorted(set(SIMBOLOS) - set(formas))
+    sobran_en_croquis = sorted(set(formas) - set(SIMBOLOS))
+    avisos = []
+    if faltan_en_croquis:
+        avisos.append(
+            "Estos tipos estan en editor/validar.py pero el croquis no sabe "
+            "dibujarlos: " + ", ".join(faltan_en_croquis))
+    if sobran_en_croquis:
+        avisos.append(
+            "El croquis dibuja estos tipos, pero validar.py no deja usarlos: "
+            + ", ".join(sobran_en_croquis))
+    return avisos
+
+
+def _n(v) -> str:
+    return str(int(round(float(v))))
+
+
+def _texto_zonas(zonas: list) -> str:
+    """El array de zonas, formateado como estaba: una zona por parrafo.
+
+    Los puntos van pegados con coma y sin espacio ([[330,108],[592,108]], no
+    [[330,108], [592,108]]) para que al guardar sin mover una zona su linea no
+    cambie y el diff de git ensene solo lo que de verdad se toco.
+
+    Los adornos solo se escriben cuando la zona tiene alguno. Una zona sin
+    relleno, sin linea y sin animacion se escribe con sus cuatro campos de
+    siempre, igual que antes de que los adornos existieran, asi que guardar sin
+    tocar nada no ensucia el diff.
+    """
+    trozos = []
+    for z in zonas:
+        nombre, corto, poligono, desc = z[:4]
+        pts = ",".join(f"[{_n(x)},{_n(y)}]" for x, y in poligono)
+        cola = ""
+        if len(z) > 4 and z[4]:
+            cola = ", " + _texto_adornos(z[4])
+        trozos.append(
+            f"  [{json.dumps(nombre, ensure_ascii=False)}, "
+            f"{json.dumps(corto, ensure_ascii=False)},\n"
+            f"   [{pts}],\n"
+            f"   {json.dumps(desc, ensure_ascii=False)}{cola}]")
+    return "var ZONAS = [\n" + ",\n\n".join(trozos) + "\n];"
+
+
+def _texto_adornos(adornos: dict) -> str:
+    """El objeto de adornos de una zona, en el orden en que se lee.
+
+    El orden es f, l, p, rd, a, b, d, m, w, o: primero lo que se ve (relleno y
+    linea), despues como se pinta la linea (punteada y redondeo), luego el
+    movimiento y al final hacia donde va. Se omite lo que no esta, para que una
+    zona con solo un color ocupe lo minimo.
+    """
+    trozos = []
+    for clave in ("f", "l"):
+        if adornos.get(clave):
+            trozos.append(f'"{clave}": {json.dumps(adornos[clave], ensure_ascii=False)}')
+    if adornos.get("p"):
+        trozos.append('"p": 1')
+    if adornos.get("rd"):
+        trozos.append(f'"rd": {round(float(adornos["rd"]), 2):g}')
+    for clave in ("a", "b"):
+        if adornos.get(clave):
+            trozos.append(f'"{clave}": {json.dumps(adornos[clave], ensure_ascii=False)}')
+    # El sentido va pegado a la animacion del borde, que es la unica que lo
+    # tiene: asi se lee «camina, al reves» y no hay que buscarlo mas abajo.
+    if adornos.get("d"):
+        trozos.append(f'"d": {round(float(adornos["d"]), 2):g}')
+    if adornos.get("m"):
+        trozos.append(f'"m": {round(float(adornos["m"]), 2):g}')
+    # El grosor y la opacidad de la version 2. Van al final, y solo cuando se
+    # apartan de lo de fabrica: una zona corriente no crece ni un byte.
+    if adornos.get("w") and float(adornos["w"]) != GROSOR:
+        trozos.append(f'"w": {round(float(adornos["w"]), 2):g}')
+    if adornos.get("o") and float(adornos["o"]) != OPACIDAD:
+        trozos.append(f'"o": {round(float(adornos["o"]), 2):g}')
+    return "{" + ", ".join(trozos) + "}"
+
+
+def _limpia_zonas(zonas: list) -> list:
+    """Las zonas con los adornos ya limpios, y sin el quinto campo si sobra.
+
+    Se limpia antes de validar y antes de escribir, por el mismo motivo que en
+    los iconos: el editor manda lo que tiene en pantalla, que incluye los
+    campos vacios de los formularios. Una zona a la que no se le ha puesto nada
+    tiene que quedar exactamente como estaba.
+    """
+    salida = []
+    for z in zonas:
+        if not isinstance(z, (list, tuple)) or len(z) < 5:
+            salida.append(z)
+            continue
+        adornos = limpiar_adornos(z[4])
+        salida.append(list(z[:4]) + [adornos] if adornos else list(z[:4]))
+    return salida
+
+
+def _campos_icono(ic: dict) -> list[str]:
+    """Los campos de un icono, en orden y solo los que hacen falta.
+
+    El orden es t, x, y, n, s, r, a, m, c, i, u: de lo que mas se usa a lo que
+    menos. Con nombres en vez de posiciones, el dia que haga falta un campo
+    nuevo se añade al final y ningun icono guardado se entera.
+
+    Se omite lo que vale por defecto, para que un icono normal ocupe una linea
+    corta y el diff de git ensene lo que de verdad se toco.
+    """
+    partes = [f'"t": {json.dumps(ic.get("t", ""), ensure_ascii=False)}']
+    if "x" in ic:
+        partes.append(f'"x": {_n(ic["x"])}')
+    if "y" in ic:
+        partes.append(f'"y": {_n(ic["y"])}')
+    if ic.get("n"):
+        partes.append(f'"n": {json.dumps(ic["n"], ensure_ascii=False)}')
+    if ic.get("s"):
+        partes.append(f'"s": {_n(ic["s"])}')
+    if ic.get("r"):
+        partes.append(f'"r": {_n(ic["r"])}')
+    if ic.get("a"):
+        partes.append(f'"a": {json.dumps(ic["a"], ensure_ascii=False)}')
+    # La intensidad se escribe con un decimal como mucho: 1.4 y no 1.3999999.
+    # Y se omite cuando vale 1, que es lo normal.
+    if ic.get("m") and float(ic["m"]) != INTENSIDAD:
+        partes.append(f'"m": {round(float(ic["m"]), 2):g}')
+    # El circulo solo se escribe cuando se quita. Se mira con `in` y no por
+    # lo que valga, porque 0 es un valor legitimo y `if ic.get("c")` lo
+    # tomaria por ausencia.
+    if "c" in ic:
+        partes.append(f'"c": {_n(ic["c"])}')
+    if ic.get("i"):
+        titulo, texto = ic["i"]
+        partes.append('"i": [' + json.dumps(titulo, ensure_ascii=False)
+                      + ", " + json.dumps(texto, ensure_ascii=False) + "]")
+    # El boton con enlace, como [texto, direccion]. Va despues de `i` porque
+    # sin la informacion no sirve de nada: el boton sale dentro de esa ventana.
+    if ic.get("u"):
+        texto, url = ic["u"]
+        partes.append('"u": [' + json.dumps(texto, ensure_ascii=False)
+                      + ", " + json.dumps(url, ensure_ascii=False) + "]")
+    # Las transformaciones de la version 2. Se escriben solo cuando se apartan de
+    # lo de fabrica, con dos decimales, yASI un icono corriente no crece ni un
+    # byte en el archivo. La escala se mira con `in` y no por lo que valga,
+    # porque -1 es un valor de fabrica en el sentido de que es un espejo, y aun
+    # asi hay que poder escribirlo.
+    for clave, defecto in (("sx", ESCALA_NULA), ("sy", ESCALA_NULA)):
+        if clave in ic and float(ic[clave]) != defecto:
+            partes.append(f'"{clave}": {round(float(ic[clave]), 2):g}')
+    if ic.get("sk") and float(ic["sk"]) != 0:
+        partes.append(f'"sk": {round(float(ic["sk"]), 2):g}')
+    if ic.get("op") and float(ic["op"]) != OPACIDAD:
+        partes.append(f'"op": {round(float(ic["op"]), 2):g}')
+    return partes
+
+
+def _texto_iconos(iconos: list) -> str:
+    """El array de iconos, un objeto por linea."""
+    if not iconos:
+        return "var ICONOS = [];"
+    # Cada objeto en una linea, separados por coma. Si alguno es largo (los
+    # que llevan informacion) la linea se pasa de ancho, pero partirla por
+    # campos daria un archivo mucho mas largo y mas dificil de leer en
+    # conjunto. Se prefiere la linea larga.
+    return ("var ICONOS = [\n"
+            + ",\n".join("  {" + ", ".join(_campos_icono(ic)) + "}" for ic in iconos)
+            + "\n];")
+
+
+def _texto_propios(propios: dict) -> str:
+    """El objeto de iconos propios, con un nombre por linea.
+
+    Un mapa de bits va como data URL, en una sola linea larguisima, porque
+    JSON no deja partir un texto.
+
+    Un VECTOR va como el texto del SVG, no como data URL. El croquis lo mete
+    en el documento -en un `<symbol>`, y lo usa con `<use>`- para que se vea
+    nitido a cualquier zoom: dentro de un `<image>` el navegador lo dibuja una
+    vez y escala la foto, y en Safari eso sale pixelado. Y de paso ocupa menos,
+    porque base64 engorda un tercio.
+
+    El editor manda los vectores como data URL -los dibuja en un `<image>`, que
+    para el editor vale-, asi que la conversion se hace aqui, que es donde se
+    sabe el nombre con el que hay que renombrar sus clases.
+    """
+    if not propios:
+        return "var PROPIOS = {};"
+    lineas = []
+    for k, v in sorted(propios.items()):
+        if isinstance(v, str) and v.startswith("data:image/svg+xml"):
+            try:
+                svg = vector.de_data_url(v).decode("utf-8")
+            except vector.SvgInvalido:
+                svg = ""
+            # Si el SVG trae algo que no se puede dejar suelto -una regla de
+            # estilo que no sea de clase-, `prepara_para_incluir` devuelve None
+            # y se queda como estaba: menos nitido en Safari, pero correcto.
+            suelto = vector.prepara_para_incluir(svg, k) if svg else None
+            if suelto is not None:
+                v = suelto
+        lineas.append(f"  {json.dumps(k, ensure_ascii=False)}: {json.dumps(v)}")
+    return "var PROPIOS = {\n" + ",\n".join(lineas) + "\n};"
+
+
+def preparar_icono(datos_url: str, nombre: str, ocupados: set,
+                   lado: int = LADO_ICONO) -> tuple[str, str, bytes, str, list]:
+    """Convierte una imagen subida en un icono listo para el croquis.
+
+    Devuelve `(nombre, data URL, bytes para la biblioteca, extensión, quitado)`.
+
+    Hay dos caminos y no se parecen en nada:
+
+    - **Mapa de bits** (PNG, JPG, WebP, GIF, BMP): se recorta a lo que no es
+      transparente, se encaja en un cuadro de lado x lado sin deformarlo, se
+      reduce a 160 px y se guarda en PNG. Con el cuadro y el recorte, una
+      imagen con margenes de sobra ocupa el icono entero, y una foto alargada
+      no sale aplastada.
+
+    - **Vector** (SVG): no se toca el dibujo. Solo se limpia de lo que un icono
+      no necesita y se guarda tal cual. Reducir un SVG seria destruir
+      justamente lo que lo hace bueno: los iconos del mapa se amplian hasta
+      cuatro veces con el zoom, y un vector no se pixela.
+
+    `quitado` es la lista de lo que se le quito al SVG, para poder decirlo. En
+    un mapa de bits va vacia.
+    """
+    if not isinstance(datos_url, str):
+        raise ErrorEditor("Falta la imagen.")
+    trozo = re.match(r"data:image/[a-z0-9.+-]+;base64,(.+)$",
+                     datos_url, re.S | re.I)
+    if not trozo:
+        raise ErrorEditor(
+            "Eso no es una imagen. Sirven PNG, JPG, WebP, GIF, BMP y SVG.")
+    try:
+        crudo = base64.b64decode(trozo.group(1), validate=False)
+    except (ValueError, TypeError):
+        raise ErrorEditor("La imagen viene mal codificada.") from None
+    if len(crudo) > 12_000_000:
+        raise ErrorEditor("La imagen pasa de 12 MB. Súbela más pequeña.")
+
+    # El SVG se reconoce por el contenido y no por la extension ni por el tipo
+    # que declara el navegador, que los dos mienten.
+    if vector.parece_svg(crudo):
+        return _preparar_vector(crudo, nombre, ocupados)
+
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        raise ErrorEditor(
+            "Hace falta Pillow para preparar las imagenes.\n"
+            "En el equipo del proyecto ya esta: usa .venv\\Scripts\\python.exe") from None
+
+    try:
+        with Image.open(io.BytesIO(crudo)) as original:
+            original.load()
+            # Los moviles guardan la orientacion en los metadatos, no en los
+            # pixeles: sin esto, una foto vertical sale tumbada.
+            imagen = ImageOps.exif_transpose(original).convert("RGBA")
+    except Exception:
+        raise ErrorEditor(
+            "No se pudo abrir la imagen. Prueba a guardarla como PNG, JPG o SVG.") from None
+
+    # Fuera los margenes vacios: una imagen con mucho aire alrededor saldria
+    # diminuta dentro del circulo.
+    caja = imagen.getbbox()
+    if caja:
+        imagen = imagen.crop(caja)
+
+    imagen.thumbnail((lado, lado), Image.LANCZOS)
+    lienzo = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+    lienzo.paste(imagen, ((lado - imagen.width) // 2, (lado - imagen.height) // 2),
+                 imagen)
+
+    guardado = io.BytesIO()
+    lienzo.save(guardado, "PNG", optimize=True)
+    png = guardado.getvalue()
+    salida = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    if len(salida) > MAX_ICONO:
+        raise ErrorEditor(
+            f"La imagen queda en {len(salida) // 1024} KB y el tope son "
+            f"{MAX_ICONO // 1024} KB. Prueba con una más sencilla o más pequeña, "
+            f"o súbela en SVG: un vector pesa poco y no se pixela.")
+
+    return _nombre_libre(nombre, ocupados), salida, png, "png", []
+
+
+def _preparar_vector(crudo: bytes, nombre: str,
+                     ocupados: set) -> tuple[str, str, bytes, str, list]:
+    """El camino del SVG: limpiarlo y guardarlo tal cual, sin reducir."""
+    try:
+        limpio, quitado = vector.prepara(crudo)
+    except vector.SvgInvalido as e:
+        raise ErrorEditor(str(e)) from None
+
+    salida = vector.a_data_url(limpio)
+    if len(salida) > MAX_VECTOR:
+        raise ErrorEditor(
+            f"El SVG queda en {len(salida) // 1024} KB y el tope son "
+            f"{MAX_VECTOR // 1024} KB. Súbelo más simple.")
+
+    return _nombre_libre(nombre, ocupados), salida, limpio.encode("utf-8"), "svg", quitado
+
+
+def guarda_en_biblioteca(nombre: str, contenido: bytes, extension: str,
+                         ajustes: dict) -> None:
+    """Deja el icono preparado en la biblioteca del editor, con sus ajustes.
+
+    Se guarda el archivo ya preparado —el PNG recortado y reducido, o el SVG
+    limpiado—, no lo que subio el usuario: asi volver a poner el icono es
+    instantaneo y no hay que repetir el trabajo. Vive fuera de git, como el
+    respaldo: el croquis ya lleva dentro las imagenes que usa, y esto es solo
+    la despensa.
+
+    Los ajustes van en un JSON al lado. Son el tamano, la animacion y el
+    circulo con los que se configuro al subirlo: lo que hace que al volver a
+    poner ese icono salga como se dejo, y no con los valores de fabrica.
+    """
+    BIBLIOTECA.mkdir(exist_ok=True)
+    (BIBLIOTECA / f"{nombre}.{extension}").write_bytes(contenido)
+    (BIBLIOTECA / f"{nombre}.json").write_text(
+        json.dumps(ajustes, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+# Los archivos que puede tener un icono en la biblioteca. El PNG y el SVG son
+# el mismo icono en dos formatos distintos: si se sube uno encima del otro, el
+# nuevo reemplaza al viejo en vez de quedarse los dos.
+EXTENSIONES = ("png", "svg")
+
+
+def _archivo_de(nombre: str) -> Path | None:
+    """La ruta del icono en la biblioteca, busque donde busque. None si no esta."""
+    for ext in EXTENSIONES:
+        ruta = BIBLIOTECA / f"{nombre}.{ext}"
+        if ruta.is_file():
+            return ruta
+    return None
+
+
+def propios_para_editar(propios: dict) -> dict:
+    """Los iconos propios como se editan, no como se publican.
+
+    El croquis lleva los iconos en la forma que pesa menos: un SVG se convierte
+    a PNG en el navegador cuando el PNG sale mas corto, que es lo que pasa con
+    los dibujos complicados. La biblioteca, en cambio, guarda el archivo tal
+    como se subio.
+
+    Al abrir el editor se prefiere SIEMPRE el archivo de la biblioteca. Si no,
+    un icono subido en SVG volveria al editor ya convertido a PNG, se perderia
+    el original y no habria forma de volver atras: el croquis publicado pasaria
+    a ser la fuente de la que se edita, y eso es justo al reves.
+
+    Un icono que no este en la biblioteca se deja como venga: puede ser uno
+    viejo, de antes de que la biblioteca existiera.
+    """
+    salida = dict(propios)
+    for nombre in list(salida):
+        ruta = _archivo_de(nombre)
+        if ruta is None:
+            # Un icono que no esta en la biblioteca. En el croquis un vector
+            # viene como TEXTO de SVG, y el editor lo dibuja en un `<image>`,
+            # que necesita una data URL. Se convierte, o el editor no lo
+            # ensenaria.
+            valor = salida[nombre]
+            if isinstance(valor, str) and not valor.lstrip().startswith("data:"):
+                salida[nombre] = vector.a_data_url(valor)
+            continue
+        crudo = ruta.read_bytes()
+        if ruta.suffix.lower() == ".svg":
+            salida[nombre] = vector.a_data_url(crudo.decode("utf-8"))
+        else:
+            salida[nombre] = ("data:image/png;base64,"
+                              + base64.b64encode(crudo).decode("ascii"))
+    return salida
+
+
+def vectores_listos(propios: dict) -> dict:
+    """El SVG de cada icono propio vectorial, listo para pintarlo con `<use>`.
+
+    Es la MISMA preparacion que hace el croquis al publicar: les pone el nombre
+    delante a las clases y a los ids para que no choquen entre iconos. Se manda
+    aparte del data URL porque el editor, hasta ahora, dibujaba los propios en
+    un `<image>`, y un `<image>` es un rectangulo: el toque caia tambien en los
+    huecos transparentes del dibujo. Pintados como vector de verdad, el area
+    clicable es lo que esta pintado.
+
+    Un SVG que no se pueda dejar suelto (una regla de estilo que no sea de
+    clase) se omite, y ese icono se queda como estaba.
+    """
+    salida = {}
+    for nombre in list(propios):
+        ruta = _archivo_de(nombre)
+        if ruta is not None and ruta.suffix.lower() == ".svg":
+            svg = ruta.read_text(encoding="utf-8")
+        else:
+            valor = propios[nombre]
+            if not (isinstance(valor, str) and valor.lstrip().startswith("<svg")):
+                continue
+            svg = valor
+        listo = vector.prepara_para_incluir(svg, nombre)
+        if listo is not None:
+            salida[nombre] = listo
+    return salida
+
+
+def _ajustes_de(nombre: str) -> dict:
+    """Los ajustes guardados de un icono de la biblioteca. Vacio si no hay.
+
+    Si el JSON esta roto se devuelve vacio en vez de fallar: unos ajustes que
+    no se pueden leer no son motivo para no poder usar el icono, que es lo que
+    de verdad importa.
+    """
+    ruta = BIBLIOTECA / f"{nombre}.json"
+    if not ruta.is_file():
+        return {}
+    try:
+        datos = json.loads(ruta.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return datos if isinstance(datos, dict) else {}
+
+
+def lista_biblioteca(propios: dict) -> list[dict]:
+    """Los iconos guardados que ahora mismo NO estan en el croquis.
+
+    Los que ya estan no se listan: aparecen en la paleta, y ofrecerlos otra
+    vez en dos sitios distintos solo confunde.
+
+    Cada uno lleva sus ajustes y si es vector, para que la lista pueda decir
+    con que se configuro y al recuperarlo vuelvan.
+    """
+    if not BIBLIOTECA.is_dir():
+        return []
+    fuera = []
+    for ext in EXTENSIONES:
+        for ruta in sorted(BIBLIOTECA.glob(f"*.{ext}")):
+            if ruta.stem in propios:
+                continue
+            # Un nombre puede tener el PNG y el SVG a la vez si se subieron
+            # los dos. Se enseña una vez, con el que se vaya a usar: el SVG,
+            # que se ve mejor a cualquier tamaño.
+            if any(o["nombre"] == ruta.stem for o in fuera):
+                continue
+            fuera.append({"nombre": ruta.stem, "bytes": ruta.stat().st_size,
+                          "vector": ext == "svg",
+                          "ajustes": _ajustes_de(ruta.stem)})
+    return sorted(fuera, key=lambda o: o["nombre"])
+
+
+def lee_de_biblioteca(nombre: str) -> dict:
+    """Lo que hace falta para volver a poner un icono de la biblioteca."""
+    if not NOMBRE_PROPIO.fullmatch(nombre or ""):
+        raise ErrorEditor(f"«{nombre}» no es un nombre de icono valido.")
+    ruta = _archivo_de(nombre)
+    if ruta is None:
+        raise ErrorEditor(f"En la biblioteca no hay ningun icono «{nombre}».")
+    datos = ruta.read_bytes()
+    es_vector = ruta.suffix.lower() == ".svg"
+    tope = MAX_VECTOR if es_vector else MAX_ICONO
+    # El data URL ocupa mas que el archivo, asi que se comprueba el data URL.
+    if es_vector:
+        texto_svg = datos.decode("utf-8")
+        url = vector.a_data_url(texto_svg)
+    else:
+        url = "data:image/png;base64," + base64.b64encode(datos).decode("ascii")
+    if len(url) > tope:
+        raise ErrorEditor(
+            f"«{nombre}» ocupa {len(url) // 1024} KB y el tope son "
+            f"{tope // 1024} KB, asi que no cabe en el croquis.")
+    salida = {"datos": url, "vector": es_vector, "ajustes": _ajustes_de(nombre)}
+    if es_vector:
+        # El vector listo para `<use>`, como en el estado: asi al recuperarlo de
+        # la biblioteca el editor lo pinta como vector y no como `<image>`.
+        salida["svg_listo"] = vector.prepara_para_incluir(texto_svg, nombre)
+    return salida
+
+
+def borra_de_biblioteca(nombre: str) -> None:
+    """Quita un icono de la biblioteca, con sus ajustes. No toca el croquis.
+
+    Se llevan tanto el PNG como el SVG: si el mismo nombre tuviera los dos,
+    borrar solo uno dejaria el icono a medias.
+    """
+    if not NOMBRE_PROPIO.fullmatch(nombre or ""):
+        raise ErrorEditor(f"«{nombre}» no es un nombre de icono valido.")
+    for ext in (*EXTENSIONES, "json"):
+        ruta = BIBLIOTECA / f"{nombre}.{ext}"
+        if ruta.is_file():
+            ruta.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Modelos
+# ---------------------------------------------------------------------------
+# Un modelo es un icono guardado entero menos la posicion. Se estampa en el
+# mapa tal cual, con su tamano, su giro, su animacion, su circulo y su
+# informacion. Es lo que hace que poner veinte puestos de comida iguales sea
+# veinte clics y no veinte veces de configurarlos a mano.
+def lee_modelos() -> list:
+    """Los modelos guardados. Lista vacia si todavia no hay ninguno."""
+    if not MODELOS.is_file():
+        return []
+    try:
+        datos = json.loads(MODELOS.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        raise ErrorEditor(
+            f"El archivo de modelos ({MODELOS.name}) no se puede leer: {e}.\n"
+            f"Si lo has editado a mano, revisa las comas y las comillas. "
+            f"Puedes borrarlo para empezar de cero: no toca el croquis.") from None
+    return datos if isinstance(datos, list) else []
+
+
+def _escribe_modelos(modelos: list) -> None:
+    """Guarda los modelos. Es lo unico que escribe este archivo."""
+    MODELOS.write_text(json.dumps(modelos, ensure_ascii=False, indent=2) + "\n",
+                       encoding="utf-8")
+
+
+def guarda_modelo(nombre: str, icono: dict, propios: dict) -> dict:
+    """Añade un modelo, o reemplaza el que tenga el mismo nombre.
+
+    Reemplazar en vez de acumular es lo que uno espera al volver a guardar con
+    el mismo nombre («Puesto de comida» de antes pasa a ser el de ahora). Si
+    se acumularan, la lista se llenaria de variantes y no se sabria cual es la
+    buena.
+    """
+    nombre = (nombre or "").strip()
+    if not nombre:
+        raise ErrorEditor("El modelo necesita un nombre.")
+    if len(nombre) > MAX_NOMBRE_MODELO:
+        raise ErrorEditor(f"El nombre pasa de {MAX_NOMBRE_MODELO} caracteres.")
+
+    if not isinstance(icono, dict):
+        raise ErrorEditor("No hay ningún icono que guardar.")
+    # La posicion se elige al estampar, asi que no se guarda.
+    limpio = {k: v for k, v in icono.items() if k not in ("x", "y")}
+
+    modelos = [m for m in lee_modelos()
+               if not (isinstance(m, dict)
+                       and str(m.get("nombre", "")).strip().lower() == nombre.lower())]
+    modelos.append({"nombre": nombre, "i": limpio})
+
+    problemas = revisar_modelos(modelos, propios)
+    if problemas:
+        raise ErrorEditor("\n".join(problemas))
+    _escribe_modelos(modelos)
+    return {"nombre": nombre, "modelos": len(modelos)}
+
+
+def borra_modelo(nombre: str, propios: dict) -> dict:
+    """Quita un modelo por su nombre."""
+    modelos = lee_modelos()
+    quedan = [m for m in modelos
+              if not (isinstance(m, dict)
+                      and str(m.get("nombre", "")).strip().lower()
+                      == (nombre or "").strip().lower())]
+    if len(quedan) == len(modelos):
+        raise ErrorEditor(f"No hay ningún modelo que se llame «{nombre}».")
+    _escribe_modelos(quedan)
+    return {"quitados": len(modelos) - len(quedan), "modelos": len(quedan)}
+
+
+def _nombre_libre(nombre: str, ocupados: set) -> str:
+    """Un nombre de icono utilizable: minusculas, numeros y guiones.
+
+    Si ya esta cogido se le anade un numero, en vez de pisar el que hubiera:
+    el usuario puede subir dos veces el mismo archivo sin darse cuenta, y
+    perder el primero seria una sorpresa desagradable.
+    """
+    base = re.sub(r"[^a-z0-9]+", "-", (nombre or "").lower()).strip("-")
+    # Sin extension: "logo-uabc.png" -> "logo-uabc".
+    base = base[:24].strip("-") or "icono"
+    if not NOMBRE_PROPIO.fullmatch(base):
+        base = (base + "-icono")[:24]
+    candidato, n = base, 1
+    while candidato in ocupados or not NOMBRE_PROPIO.fullmatch(candidato):
+        n += 1
+        sufijo = f"-{n}"
+        candidato = base[:24 - len(sufijo)] + sufijo
+    return candidato
+
+
+def exige_codigo_al_dia() -> None:
+    """Corta el guardado si el proceso arranco antes del ultimo cambio.
+
+    No es una precaucion teorica: es lo que hizo que el redondeo de las
+    esquinas se perdiera sin dejar rastro. Guardar con el codigo de antes no
+    falla, guarda menos, y eso es lo peligroso: el archivo sale bien formado y
+    sin lo que ese codigo no conoce.
+    """
+    if huella_del_codigo() != HUELLA_ARRANQUE:
+        raise ErrorEditor(
+            "El editor quedó viejo: se abrió antes del último cambio de código, "
+            "así que guardaría a medias lo que todavía no conoce.\n\n"
+            "Cierra esta pestaña y vuelve a arrancar editor/editor.py. "
+            "No se ha perdido nada: el croquis sigue como estaba.")
+
+
+def _texto_enlace(enlace: dict) -> str:
+    """El bloque del boton del croquis.
+
+    Va en su propio trozo del archivo, con marcadores, porque es un dato
+    suelto: no es una zona ni un icono, hay uno solo y no se puede deducir de
+    los demas. Sin boton se escribe `null`, que es lo que el croquis espera
+    para no pintar nada.
+    """
+    if not enlace:
+        return "var ENLACE = null;"
+    trozos = [f'"{k}": {json.dumps(enlace[k], ensure_ascii=False)}'
+              for k in ("t", "u") if enlace.get(k)]
+    return "var ENLACE = {" + ", ".join(trozos) + "};"
+
+
+def guardar_croquis(zonas: list, iconos: list, propios: dict,
+                    enlace=None) -> dict:
+    """Valida y escribe las zonas, los iconos y los iconos propios.
+
+    Deja una copia de seguridad antes de tocar nada, y si algo no cuadra no
+    escribe NADA: ni las zonas, ni los iconos, ni las imagenes. A medias
+    seria peor que no escribir, porque el croquis quedaria publicado con la
+    mitad del cambio y sin forma de saber cual falta.
+
+    Los adornos de las zonas se limpian antes de validar: lo que llega del
+    editor trae los campos vacios de los formularios, y una zona sin adornos
+    tiene que quedar escrita igual que antes de que existieran.
+
+    Lo primero de todo es mirar que este proceso no sea mas viejo que el
+    codigo: un editor abierto antes del ultimo cambio guardaria a medias y sin
+    decir nada. Se mira aqui y no en la ruta HTTP para que no haya ninguna
+    forma de escribir el croquis que se salte la comprobacion.
+    """
+    exige_codigo_al_dia()
+    zonas = _limpia_zonas(zonas)
+    # El boton se valida ANTES de limpiarlo: si se limpiara primero, un boton a
+    # medias se quedaria en nada y se guardaria como si nunca hubiera existido,
+    # que es justo lo contrario de lo que hay que hacer con algo mal puesto.
+    problemas = revisar(zonas, iconos, propios, enlace)
+    if problemas:
+        raise ErrorEditor("\n".join(problemas))
+    enlace = limpiar_enlace(enlace)
+
+    texto = CROQUIS.read_text(encoding="utf-8")
+
+    # Una copia antes de tocar nada. Git ya es un respaldo, pero esta esta a
+    # mano y no hay que saber git para encontrarla.
+    RESPALDO.mkdir(exist_ok=True)
+    (RESPALDO / "croquis.html").write_text(texto, encoding="utf-8")
+
+    bloques = (("ZONAS", _texto_zonas(zonas)),
+               ("ICONOS", _texto_iconos(iconos)),
+               ("PROPIOS", _texto_propios(propios)),
+               ("ENLACE", _texto_enlace(enlace)))
+    for nombre, cuerpo in bloques:
+        a, b, _ = _tramos(texto, nombre)
+        ini, fin = _marcadores(nombre)
+        texto = texto[:a] + ini + "\n" + cuerpo + "\n" + fin + texto[b + len(fin):]
+
+    CROQUIS.write_text(texto, encoding="utf-8")
+    return {"zonas": len(zonas), "iconos": len(iconos), "propios": len(propios)}
+
+
+# ---------------------------------------------------------------------------
+# Git
+# ---------------------------------------------------------------------------
+def git(*argumentos: str) -> subprocess.CompletedProcess:
+    """Ejecuta git en la raiz del proyecto."""
+    return subprocess.run(
+        ["git", *argumentos], cwd=str(RAIZ), capture_output=True,
+        text=True, encoding="utf-8", errors="replace")
+
+
+def _salida(r: subprocess.CompletedProcess) -> str:
+    return ((r.stdout or "") + (r.stderr or "")).strip()
+
+
+def estado_git() -> dict:
+    """Lo que hace falta para el boton de subir: rama, pendientes y si hay git."""
+    if not shutil.which("git"):
+        return {"hay": False, "error": "git no esta instalado o no esta en el PATH"}
+    if not (RAIZ / ".git").is_dir():
+        return {"hay": False, "error": f"{RAIZ} no es un repositorio de git"}
+
+    rama = git("rev-parse", "--abbrev-ref", "HEAD")
+    if rama.returncode != 0:
+        return {"hay": False, "error": _salida(rama)}
+
+    pendientes = git("status", "--porcelain")
+    delante = git("rev-list", "--count", "@{u}..HEAD")
+    detras = git("rev-list", "--count", "HEAD..@{u}")
+    siguiente = git("log", "-1", "--pretty=%s")
+    return {
+        "hay": True,
+        "rama": (rama.stdout or "").strip(),
+        "pendientes": len([l for l in (pendientes.stdout or "").splitlines() if l.strip()]),
+        "sinSubir": int((delante.stdout or "0").strip() or 0),
+        "sinBajar": int((detras.stdout or "0").strip() or 0),
+        "ultimo": (siguiente.stdout or "").strip(),
+        "detalle": (pendientes.stdout or "").strip(),
+    }
+
+
+def subir(mensaje: str) -> dict:
+    """git add, commit y push. Cuenta lo que paso en cada paso.
+
+    El push se hace aqui y no se deja para despues porque es justo lo que se
+    pidio: que al guardar desde el editor la pagina publicada quede al dia.
+    Si el push falla (red, permisos), el commit local ya esta hecho y se
+    puede reintentar sin perder nada.
+    """
+    pasos = []
+    cambios = git("status", "--porcelain")
+    if not (cambios.stdout or "").strip():
+        return {"ok": True, "pasos": pasos,
+                "mensaje": "No hay nada que subir: el repositorio esta limpio."}
+
+    anadir = git("add", "-A")
+    pasos.append(("git add -A", _salida(anadir) or "ok"))
+    if anadir.returncode != 0:
+        return {"ok": False, "pasos": pasos, "mensaje": "No se pudo preparar el cambio."}
+
+    commit = git("commit", "-m", mensaje)
+    pasos.append(("git commit", _salida(commit) or "ok"))
+    if commit.returncode != 0:
+        return {"ok": False, "pasos": pasos,
+                "mensaje": "El commit fallo. Arriba esta lo que dijo git."}
+
+    push = git("push")
+    pasos.append(("git push", _salida(push) or "ok"))
+    if push.returncode != 0:
+        return {"ok": False, "pasos": pasos, "commitHecho": True,
+                "mensaje": "El commit quedo hecho, pero el push no subio.\n"
+                           "El cambio esta a salvo en tu equipo: vuelve a "
+                           "pulsar Subir para reintentarlo."}
+
+    return {"ok": True, "pasos": pasos, "commitHecho": True,
+            "mensaje": "Subido. GitHub Pages tarda uno o dos minutos en "
+                       "reconstruir; despues el QR ya abre la version nueva."}
+
+
+# ---------------------------------------------------------------------------
+# Servidor
+# ---------------------------------------------------------------------------
+class Manejador(BaseHTTPRequestHandler):
+    server_version = "EditorCroquis"
+
+    # Si una peticion se queda a medias (el navegador manda las cabeceras y se
+    # corta, o el cuerpo no llega entero), el hilo se quedaba esperando en
+    # read() para siempre. Con esto la conexion se corta sola y el hilo se
+    # libera. Paso de verdad: un dialogo del navegador congelo la pestana a
+    # mitad de un guardado y el hilo se quedo colgado.
+    timeout = 30
+
+    def log_message(self, formato: str, *args) -> None:  # noqa: A003
+        # El log por defecto llena la consola de cada imagen y cada sondeo.
+        # Solo interesa lo que el usuario provoca.
+        if self.path.startswith("/api/") and not self.path.endswith("/estado"):
+            sys.stderr.write(f"  {self.command} {self.path}\n")
+
+    # -- utilidades ---------------------------------------------------------
+    def _host_local(self) -> bool:
+        """Solo se atiende a quien llame por localhost.
+
+        Sin esto, una pagina web abierta en este equipo puede apuntar un
+        dominio propio a 127.0.0.1 y usar el navegador como puente para
+        escribir en el croquis. El Host delata el intento: llegaria con el
+        nombre del dominio, no con localhost.
+        """
+        host = (self.headers.get("Host") or "").split(":")[0].strip().lower()
+        return host in HOSTS_LOCALES
+
+    def _responder(self, codigo: int, cuerpo: bytes, tipo: str) -> None:
+        self.send_response(codigo)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(cuerpo)
+
+    def _json(self, datos, codigo: int = 200) -> None:
+        cuerpo = json.dumps(datos, ensure_ascii=False).encode("utf-8")
+        self._responder(codigo, cuerpo, "application/json; charset=utf-8")
+
+    def _error(self, mensaje: str, codigo: int = 400) -> None:
+        self._json({"ok": False, "mensaje": mensaje}, codigo)
+
+    def _archivo(self, ruta: Path, tipo: str) -> None:
+        if not ruta.is_file():
+            self._error(f"No existe {ruta.name} en el proyecto.", 404)
+            return
+        self._responder(200, ruta.read_bytes(), tipo)
+
+    def _cuerpo_json(self) -> dict:
+        try:
+            largo = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise ErrorEditor("Content-Length ilegible.") from None
+        # El tope es alto porque subir un icono manda la imagen entera en
+        # base64, que engorda un tercio. Lo que se acepta de verdad lo decide
+        # preparar_icono, que ya mira el tamano de la imagen decodificada.
+        if largo <= 0 or largo > 18_000_000:
+            raise ErrorEditor("El cuerpo de la peticion no tiene un tamano razonable.")
+        crudo = self.rfile.read(largo)
+        try:
+            return json.loads(crudo.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            raise ErrorEditor(f"El cuerpo no es JSON valido: {e}") from None
+
+    # -- rutas --------------------------------------------------------------
+    def do_GET(self) -> None:  # noqa: N802
+        if not self._host_local():
+            self._error("Esta herramienta solo atiende desde localhost.", 403)
+            return
+        ruta = self.path.split("?")[0].rstrip("/") or "/"
+        try:
+            if ruta in ("/", "/editor.html"):
+                self._archivo(EDITOR_HTML, "text/html; charset=utf-8")
+            elif ruta in ("/v2", "/editor-v2.html"):
+                # La v2. Si el archivo no esta, se dice con un mensaje claro en
+                # vez de un 404 de pelo: es el unico fallo posible aqui y es
+                # Facil de arreglar, pero un 404 no dice nada.
+                if not EDITOR_V2_HTML.is_file():
+                    self._error("La version 2 del editor no esta en el equipo.", 404)
+                    return
+                self._archivo(EDITOR_V2_HTML, "text/html; charset=utf-8")
+            elif ruta == "/mapa":
+                # La misma imagen que usa el croquis publicado, con su tipo de
+                # verdad. Se sirve desde aqui y no desde la web para poder
+                # trabajar sin conexion y para no depender de que Pages ya haya
+                # reconstruido. El tipo se saca de la extension: declarar un SVG
+                # como webp -o al reves- deja la pestaña con el mapa sin fondo y
+                # sin un solo error en la consola, que es lo que pasaba.
+                archivo = archivo_mapa()
+                self._archivo(archivo, tipo_de_imagen(archivo))
+            elif ruta == "/api/estado":
+                datos = leer_croquis()
+                # El vector de cada icono propio, listo para un `<use>`: es lo
+                # que hace que su area clicable sea el dibujo y no el
+                # rectangulo entero del `<image>`.
+                datos["vectoresSvg"] = vectores_listos(datos["propios"])
+                # Los iconos propios se mandan como se editan y no como se
+                # publican: en el croquis van convertidos a PNG cuando eso pesa
+                # menos, y la biblioteca guarda el archivo original.
+                datos["propios"] = propios_para_editar(datos["propios"])
+                formas = formas_simbolos()
+                datos["simbolos"] = SIMBOLOS
+                datos["formas"] = formas
+                datos["avisos"] = tipos_coinciden(formas)
+                datos["ancho"], datos["alto"] = ANCHO, ALTO
+                datos["topes"] = {"tam": [MIN_TAM_ICONO, MAX_TAM_ICONO],
+                                  "rot": [MIN_ROT, MAX_ROT],
+                                  "inte": [MIN_INTENSIDAD, MAX_INTENSIDAD],
+                                  "lado": LADO_ICONO, "boton": MAX_BOTON,
+                                  "url": MAX_URL, "redondeo": MAX_REDONDEO,
+                                  "titulo": MAX_TITULO, "texto": MAX_TEXTO,
+                                  "totalPropios": MAX_ICONOS_PROPIOS}
+                datos["animaciones"] = ANIMACIONES
+                datos["sinIntensidad"] = sorted(ANIMACIONES_SIN_INTENSIDAD)
+                # Las animaciones de las zonas, que son otras: la de la zona
+                # mueve el relleno y la linea, y la del borde solo la linea.
+                # Las manda el servidor por el mismo motivo que las de los
+                # iconos: es el que valida, y dos listas separadas acabarian
+                # diciendo cosas distintas.
+                datos["animacionesZona"] = ANIMACIONES_ZONA
+                datos["animacionesBorde"] = ANIMACIONES_BORDE
+                # Los sentidos de `camina`, por el mismo motivo que las listas
+                # de animaciones: los manda el servidor, que es quien valida.
+                datos["sentidosCamina"] = SENTIDOS_CAMINA
+                # Los archivos que se pueden enlazar y si son imagenes. La
+                # carpeta vive en el repositorio, asi que la lista cambia sola
+                # al meter o sacar archivos: no hay que apuntar nada.
+                datos["recursos"] = leer_recursos()
+                datos["carpetaRecursos"] = CARPETA_RECURSOS
+                # Si este proceso arranco antes del ultimo cambio de codigo, la
+                # pagina lo dice y apaga el boton de guardar. Es la unica señal
+                # que puede dar: desde dentro, un editor viejo y uno al dia
+                # responden exactamente igual.
+                datos["codigoViejo"] = huella_del_codigo() != HUELLA_ARRANQUE
+                datos["biblioteca"] = lista_biblioteca(datos["propios"])
+                # Los ajustes de cada icono propio, para que la paleta los
+                # dibuje como son y al ponerlos salgan ya configurados.
+                datos["ajustesPropios"] = {
+                    n: _ajustes_de(n) for n in datos["propios"]}
+                # Y cuales son vectores: un SVG no se pixela al ampliarlo y un
+                # PNG si, y eso se ve en la paleta.
+                datos["vectores"] = {
+                    n: (_archivo_de(n) or Path("")).suffix.lower() == ".svg"
+                    for n in datos["propios"]}
+                datos["modelos"] = lee_modelos()
+                datos["git"] = estado_git()
+                datos["publicado"] = "https://tonycabreram.github.io/OrgulloCimarron/plantilla/croquis.html"
+                self._json(datos)
+            elif ruta == "/api/git":
+                self._json(estado_git())
+            elif ruta == "/api/biblioteca":
+                # Solo la lista: los PNG que hay guardados y no estan en el
+                # croquis. El contenido se pide aparte, con POST, para no
+                # mandar medio mega de imagenes cada vez que se pinta el panel.
+                self._json({"biblioteca": lista_biblioteca(leer_croquis()["propios"])})
+            elif ruta == "/api/modelos":
+                self._json({"modelos": lee_modelos()})
+            else:
+                self._error("Esa direccion no existe en el editor.", 404)
+        except ErrorEditor as e:
+            self._error(str(e))
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        self.do_GET()
+
+    def do_POST(self) -> None:  # noqa: N802
+        if not self._host_local():
+            self._error("Esta herramienta solo atiende desde localhost.", 403)
+            return
+        ruta = self.path.split("?")[0].rstrip("/")
+        try:
+            datos = self._cuerpo_json()
+            if ruta == "/api/guardar":
+                zonas, iconos = datos.get("zonas"), datos.get("iconos")
+                propios = datos.get("propios")
+                if not isinstance(zonas, list) or not isinstance(iconos, list):
+                    raise ErrorEditor("Faltan las zonas o los iconos.")
+                if propios is None:
+                    propios = {}
+                if not isinstance(propios, dict):
+                    raise ErrorEditor("Los iconos propios tienen que ser un diccionario.")
+                self._json({"ok": True,
+                            "guardado": guardar_croquis(zonas, iconos, propios,
+                                                        datos.get("enlace")),
+                            "git": estado_git()})
+            elif ruta == "/api/icono":
+                # Reemplazar la imagen de un icono que ya existe. El nombre que
+                # se reemplaza cuenta como libre: es el mismo icono con otra
+                # imagen, no uno nuevo. Sin quitarlo de `ocupados`,
+                # `_nombre_libre` le anadiria un numero y dejaria al lado el
+                # viejo, que es justo lo que no se quiere.
+                #
+                # Solo vale para un icono que ya este en el croquis: si el
+                # nombre no esta, se trata como una subida normal. Asi una
+                # pestaña vieja no puede pisar un simbolo de serie con ese
+                # nombre.
+                existentes = set(datos.get("existentes") or [])
+                reemplazar = str(datos.get("reemplazar") or "").strip()
+                ocupados = set(SIMBOLOS) | existentes
+                if reemplazar in existentes:
+                    ocupados.discard(reemplazar)
+                elif reemplazar:
+                    reemplazar = ""
+                nombre, imagen, contenido, extension, quitado = preparar_icono(
+                    datos.get("datos"), reemplazar or str(datos.get("nombre") or ""),
+                    ocupados)
+                # Los ajustes se validan antes de guardar nada: unos ajustes
+                # malos no se notan al guardarlos, sino al estampar con ellos.
+                ajustes = limpiar_ajustes(datos.get("ajustes") or {})
+                problemas = revisar_ajustes(ajustes)
+                if problemas:
+                    raise ErrorEditor("\n".join(problemas))
+                # Se guarda en la biblioteca ademas de mandarlo: asi se puede
+                # volver a poner mas adelante sin buscar la imagen otra vez, y
+                # con los ajustes que se le pusieron.
+                #
+                # Al reemplazar se borra antes lo que hubiera: si la imagen
+                # nueva es de otro tipo (un SVG por un PNG), el archivo viejo
+                # se quedaria al lado y la biblioteca ensenaria el icono dos
+                # veces, una con la imagen de antes.
+                if reemplazar:
+                    borra_de_biblioteca(nombre)
+                guarda_en_biblioteca(nombre, contenido, extension, ajustes)
+                # Si es vector, se manda tambien su version lista para `<use>`,
+                # para que el editor lo dibuje como vector nada mas subirlo, sin
+                # tener que recargar. Si no se puede dejar suelto, va None y el
+                # editor tira del `<image>`.
+                svg_listo = None
+                if extension == "svg":
+                    try:
+                        svg_listo = vector.prepara_para_incluir(
+                            vector.de_data_url(imagen).decode("utf-8"), nombre)
+                    except (UnicodeDecodeError, vector.SvgInvalido):
+                        svg_listo = None
+                self._json({"ok": True, "nombre": nombre, "datos": imagen,
+                            "bytes": len(imagen), "ajustes": ajustes,
+                            "vector": extension == "svg", "quitado": quitado,
+                            "svg_listo": svg_listo,
+                            "reemplazo": bool(reemplazar)})
+            elif ruta == "/api/biblioteca":
+                # Recuperar un icono guardado, o quitarlo de la despensa.
+                if datos.get("quitar"):
+                    borra_de_biblioteca(str(datos["quitar"]))
+                    self._json({"ok": True, "mensaje": "Quitado de la biblioteca.",
+                                "biblioteca": lista_biblioteca(leer_croquis()["propios"])})
+                else:
+                    nombre = str(datos.get("nombre") or "")
+                    self._json(dict({"ok": True, "nombre": nombre},
+                                    **lee_de_biblioteca(nombre)))
+            elif ruta == "/api/modelos":
+                # Guardar un modelo, o quitarlo.
+                #
+                # Los modelos NO van dentro del croquis, asi que no hace falta
+                # pulsar Guardar despues: su archivo es suyo y se escribe
+                # aqui mismo. Es lo contrario de los iconos, que si son
+                # contenido del mapa y esperan al Guardar.
+                propios = leer_croquis()["propios"]
+                if datos.get("quitar"):
+                    quitado = borra_modelo(str(datos["quitar"]), propios)
+                    self._json({"ok": True, "modelos": lee_modelos(),
+                                "quitado": quitado})
+                else:
+                    guardado = guarda_modelo(str(datos.get("nombre") or ""),
+                                             datos.get("icono"), propios)
+                    self._json({"ok": True, "guardado": guardado,
+                                "modelos": lee_modelos()})
+            elif ruta == "/api/subir":
+                mensaje = str(datos.get("mensaje") or "").strip()
+                if not mensaje:
+                    raise ErrorEditor("Falta el mensaje del commit.")
+                if len(mensaje) > 200:
+                    raise ErrorEditor("El mensaje del commit es demasiado largo.")
+                if "\n" in mensaje:
+                    raise ErrorEditor("El mensaje del commit va en una sola linea.")
+                self._json(subir(mensaje), 200)
+            else:
+                self._error("Esa direccion no existe en el editor.", 404)
+        except ErrorEditor as e:
+            self._error(str(e))
+
+
+def puerto_libre(desde: int, intentos: int = 10) -> int:
+    """El primer puerto libre a partir de `desde`."""
+    for p in range(desde, desde + intentos):
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", p))
+            except OSError:
+                continue
+            return p
+    raise SystemExit(f"No hay ningun puerto libre entre {desde} y {desde + intentos}.")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Editor local del croquis del Dia del Orgullo Cimarron. "
+                    "Abre el navegador en una direccion que solo funciona en este equipo.")
+    ap.add_argument("--puerto", type=int, default=8730,
+                    help="puerto a usar (si esta ocupado, se prueba el siguiente)")
+    ap.add_argument("--no-abrir", action="store_true",
+                    help="no abrir el navegador automaticamente")
+    args = ap.parse_args()
+
+    for imprescindible in (CROQUIS, MAPA, EDITOR_HTML):
+        if not imprescindible.is_file():
+            print(f"Falta {imprescindible}.")
+            return 1
+
+    puerto = puerto_libre(args.puerto)
+    servidor = ThreadingHTTPServer(("127.0.0.1", puerto), Manejador)
+    url = f"http://127.0.0.1:{puerto}/"
+
+    print()
+    print("  Editor del croquis · Dia del Orgullo Cimarron 2026")
+    print("  " + "-" * 52)
+    print(f"  Abierto en      {url}")
+    print(f"  Modifica        {CROQUIS.relative_to(RAIZ)}")
+    print(f"  Copia de seg.   {RESPALDO.relative_to(RAIZ)}\\croquis.html")
+    print()
+    print("  Solo funciona en este equipo. Para cerrarlo, Ctrl+C.")
+    print("  Esto no se publica: el croquis que abre el QR sigue siendo")
+    print("  de solo lectura.")
+    print()
+
+    if not args.no_abrir:
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+
+    try:
+        servidor.serve_forever()
+    except KeyboardInterrupt:
+        print("\n  Cerrado. El croquis no cambio si no pulsaste Guardar.\n")
+    finally:
+        servidor.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

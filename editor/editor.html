@@ -1,0 +1,3610 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Herramienta interna. Aunque alguien llegue a esta direccion, no hace
+     nada sin el servidor local: no puede escribir en el croquis ni tocar git. -->
+<meta name="robots" content="noindex,nofollow">
+<title>Editor del croquis · uso interno</title>
+<style>
+/* ---------------------------------------------------------------------------
+   Paleta sobria a proposito: esto es una herramienta de trabajo y el color
+   tiene que estar en el mapa, no en los botones. El verde y el oro son los
+   institucionales, los mismos del croquis.
+--------------------------------------------------------------------------- */
+:root{
+  --papel:#f3f9ee; --fondo:#e8eef0; --panel:#fff; --linea:#ccd8d4;
+  --tinta:#0a4842; --verde:#00723f; --oro:#febe10; --alerta:#b3261e;
+  --texto:#173230; --tenue:#5d7370;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden}
+body{
+  background:var(--fondo); color:var(--texto);
+  font:13.5px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+  display:grid; grid-template-rows:auto 1fr;
+}
+
+/* --- barra de arriba --- */
+#barra{
+  display:flex;align-items:center;gap:14px;padding:10px 14px;
+  background:var(--panel);border-bottom:1px solid var(--linea);
+  box-shadow:0 1px 3px #17322e0f;z-index:3;
+}
+#barra h1{font-size:14px;font-weight:750;margin:0;letter-spacing:-.01em;white-space:nowrap}
+#barra h1 small{display:block;font-size:10.5px;font-weight:600;color:var(--tenue);
+                letter-spacing:.08em;text-transform:uppercase}
+#marcaGit{
+  font-size:11.5px;color:var(--tenue);padding:3px 9px;border-radius:99px;
+  background:#eef3f1;white-space:nowrap;max-width:46ch;overflow:hidden;
+  text-overflow:ellipsis;
+}
+#marcaGit b{color:var(--texto);font-weight:650}
+#marcaGit.pend{background:#fff5d6;color:#7a5a00}
+.empuja{margin-left:auto}
+button{font:inherit;cursor:pointer}
+.boton{
+  padding:7px 13px;border:1px solid var(--linea);border-radius:9px;
+  background:#fff;color:var(--texto);font-weight:600;
+  transition:background .15s,border-color .15s,color .15s;
+}
+.boton:hover{border-color:#9db4ae;background:#f7faf9}
+.boton[disabled]{opacity:.5;cursor:not-allowed}
+.boton.principal{background:var(--verde);border-color:var(--verde);color:#fff}
+.boton.principal:hover{background:#005e34}
+.boton.oro{background:var(--oro);border-color:#e0a800;color:#3f2f00}
+.boton.oro:hover{background:#eab000}
+.boton.peligro:hover{border-color:var(--alerta);color:var(--alerta);background:#fdf2f1}
+.boton.chico{padding:5px 9px;font-size:11.5px;font-weight:650;border-radius:7px}
+#mensaje{
+  display:flex;align-items:center;gap:10px;font-size:12.5px;font-weight:600;
+  padding:7px 13px;border-radius:9px;white-space:pre-line;
+}
+#mensaje.ok{background:#e6f5ec;color:#0a5c33}
+#mensaje.mal{background:#fdecea;color:#8f1d16}
+#mensaje.aviso{background:#fff8e1;color:#7a5a00}
+#mensaje:empty{display:none}
+
+/* El aviso de editor viejo: el proceso arranco antes del ultimo cambio de
+   codigo, asi que guardaria a medias lo que no conoce. Va pegado a la barra de
+   arriba y no dentro del panel, porque hay que verlo ANTES de tocar nada. */
+#reinicia{
+  background:#fdecea;color:#8f1d16;border-bottom:1px solid #f0c4c0;
+  padding:11px 16px;font-size:13px;line-height:1.5;
+}
+#reinicia[hidden]{display:none}
+#reinicia b{font-weight:750}
+#reinicia code{background:#fff;border-radius:5px;padding:1px 6px;
+               font-family:Consolas,monospace;font-size:12px}
+
+/* --- Las pestañas del panel ------------------------------------------------
+   El panel era una columna larga con siete bloques seguidos, y para encontrar
+   algo habia que recorrerla entera. Ahora se reparte en cuatro pestañas, una
+   por cosa: las zonas, los iconos, los modelos guardados y lo que se va a
+   publicar. Es la idea de Illustrator: a la derecha, solo lo que se esta
+   tocando.
+
+   Los avisos NO van dentro de ninguna. Se quedan arriba, siempre a la vista,
+   porque son lo primero que se mira antes de guardar y esconderlos seria
+   esconderlos justo cuando hacen falta.
+
+   La tira de pestañas se queda pegada arriba al recorrer el panel: con la
+   lista de iconos larga, sin eso habria que subir del todo para cambiar de
+   pestaña. */
+#pestanas{
+  display:flex;gap:3px;padding:9px 10px 0;background:var(--fondo);
+  border-bottom:1px solid var(--linea);position:sticky;top:0;z-index:3;
+}
+.pestana{
+  flex:1;min-width:0;padding:7px 4px 8px;cursor:pointer;font:inherit;
+  font-size:12px;font-weight:650;color:var(--tenue);
+  background:#ffffff9c;border:1px solid var(--linea);border-bottom:none;
+  border-radius:9px 9px 0 0;
+}
+.pestana:hover{color:var(--tinta);background:#fff}
+.pestana.acto{background:var(--panel);color:var(--tinta);font-weight:750}
+.hoja{display:none}
+.hoja.acto{display:block}
+
+/* Una linea de dato: el nombre a la izquierda y el valor a la derecha. Se usa
+   en la pestaña de publicar, que es la que cuenta que hay y que falta. */
+.dato{display:flex;gap:10px;justify-content:space-between;align-items:baseline;
+      font-size:12px;padding:4px 0;border-bottom:1px dashed var(--linea)}
+.dato:last-child{border-bottom:none}
+.dato span{color:var(--tenue);flex:none}
+.dato b{font-weight:650;text-align:right;word-break:break-word}
+
+/* --- cuerpo --- */
+main{display:grid;grid-template-columns:1fr 372px;min-height:0}
+#lienzo{position:relative;overflow:hidden;background:var(--fondo);cursor:crosshair}
+#s{position:absolute;inset:0;width:100%;height:100%;display:block}
+#ayuda{
+  position:absolute;left:12px;bottom:12px;background:#fffffff2;border:1px solid var(--linea);
+  border-radius:10px;padding:8px 12px;font-size:11.5px;color:var(--tenue);
+  line-height:1.6;pointer-events:none;max-width:60ch;
+}
+#ayuda b{color:var(--texto)}
+#flotante{position:absolute;top:12px;right:12px;display:flex;gap:6px}
+#flotante .boton{background:#fffffff2}
+
+/* --- panel --- */
+#panel{background:var(--panel);border-left:1px solid var(--linea);overflow-y:auto}
+.bloque{border-bottom:1px solid var(--linea);padding:13px 14px}
+.bloque h2{
+  font-size:10.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--tenue);margin:0 0 10px;
+}
+.fila{display:flex;gap:7px;align-items:center}
+.fila + .fila{margin-top:7px}
+label{display:block;font-size:11px;font-weight:650;color:var(--tenue);margin:0 0 3px}
+input[type=text],textarea{
+  width:100%;padding:7px 9px;border:1px solid var(--linea);border-radius:8px;
+  font:inherit;background:#fcfdfc;color:var(--texto);resize:vertical;
+}
+input[type=text]:focus,textarea:focus,select:focus{
+  outline:2px solid #00723f33;border-color:var(--verde);background:#fff;
+}
+select{
+  width:100%;padding:7px 9px;border:1px solid var(--linea);border-radius:8px;
+  font:inherit;background:#fcfdfc;color:var(--texto);
+}
+.pista{font-size:11px;color:var(--tenue);line-height:1.45;margin-top:5px}
+
+/* Una casilla con su texto al lado. En el editor casi todo son deslizadores y
+   desplegables, asi que la unica casilla que hay se marca para que se vea que
+   se puede pulsar. */
+.marca{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;
+       color:var(--texto);margin:0;cursor:pointer}
+.marca input{width:16px;height:16px;accent-color:var(--verde);cursor:pointer;margin:0}
+.campo + .campo{margin-top:9px}
+/* Un campo que no aplica (la intensidad con una animación que no la usa) se
+   apaga entero, etiqueta incluida. Solo bajar la opacidad del deslizador
+   dejaria el texto a plena tinta y pareceria que sigue activo. */
+.campo.apagado{opacity:.45}
+.campo.apagado label,.campo.apagado .pista{cursor:default}
+input[type=range]:disabled{cursor:not-allowed}
+/* El selector de color, del tamano de un campo de texto. El que trae el
+   navegador es pequeno y con el filo biselado de siempre; aqui se le quita el
+   bisel para que pegue con los demas campos. */
+input[type=color]{width:100%;height:30px;padding:2px;margin-top:6px;
+                  border:1px solid var(--linea);border-radius:8px;
+                  background:#fcfdfc;cursor:pointer}
+/* Una casilla que no aplica (la linea punteada sin linea) se apaga, como los
+   campos: sin linea no hay nada que puntear. */
+.marca.apagada{opacity:.45;cursor:default}
+
+/* lista de zonas */
+#listaZonas{display:flex;flex-direction:column;gap:4px;max-height:210px;overflow-y:auto}
+.zona{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:8px;
+      border:1px solid transparent;background:#f4f8f7;text-align:left;width:100%}
+.zona:hover{background:#eaf2f0}
+.zona.sel{border-color:var(--verde);background:#e6f2ec}
+.zona.mal{background:#fdecea}
+.zona.mal.sel{border-color:var(--alerta)}
+.zona .punto{flex:none;width:9px;height:9px;border-radius:50%;background:var(--verde)}
+.zona.mal .punto{background:var(--alerta)}
+.zona .nom{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+           font-weight:600;font-size:12.5px}
+.zona .npt{font-size:11px;color:var(--tenue)}
+
+/* paleta de iconos */
+#paleta{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+.palo{
+  display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 3px;
+  border:1px solid var(--linea);border-radius:10px;background:#fcfdfc;cursor:grab;
+}
+.palo:hover{border-color:var(--verde);background:#f2f8f5}
+.palo.acto{border-color:var(--verde);background:#e6f2ec;box-shadow:inset 0 0 0 1px var(--verde)}
+/* Los iconos propios se distinguen de los de serie: si no, al ver la paleta no
+   se sabe cuales viajan dentro del croquis y cuales son solo un tipo. */
+.palo.propio{border-style:dashed}
+/* Y los que son vectores llevan el fondo distinto: un SVG no se pixela al
+   ampliarlo y un PNG si, asi que conviene saber cual es cual antes de poner
+   uno en un sitio que se va a ver de cerca. */
+.palo.vector{background:#f2f8f5;border-color:#8fbf9a}
+.palo.vector:hover{background:#e8f4ec}
+.palo svg{width:26px;height:26px;flex:none}
+.palo span{font-size:9.5px;color:var(--tenue);text-align:center;line-height:1.15;
+           overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.palo svg *{fill:none;stroke:var(--tinta);stroke-width:1.9;
+            stroke-linecap:round;stroke-linejoin:round}
+.palo svg .relleno{fill:var(--tinta);stroke:none}
+
+/* Los modelos: iconos guardados enteros, para estampar varios iguales. Van en
+   una rejilla como la paleta, pero mas anchos, porque el nombre de un modelo
+   lo escribe una persona y suele ser mas largo que «Baños».
+
+   El borde es dorado para que no se confundan con los simbolos de serie: son
+   otra cosa y se comportan distinto (estos llevan tamano, giro y animacion). */
+#listaModelos{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}
+.modelo{position:relative;padding:9px 5px 7px;cursor:pointer;text-align:center}
+.modelo:hover{border-color:#e0a800;background:#fffdf3}
+.modelo.acto{border-color:var(--oro);background:#fff8e1;box-shadow:inset 0 0 0 1px var(--oro)}
+.modelo svg{width:34px;height:34px;flex:none}
+.modelo .rotulo{font-size:10.5px;font-weight:650;color:var(--texto);line-height:1.2;
+                overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.modelo .nota{font-size:9.5px;color:var(--tenue);line-height:1.15;
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+/* La x para quitarlo sale al pasar por encima, para no llenar la caja de
+   botones: quitar un modelo es raro y guardarlo es lo de todos los dias. */
+.modelo .quita{position:absolute;top:3px;right:3px;width:18px;height:18px;
+               display:none;place-content:center;border:0;border-radius:99px;
+               background:#0a484214;color:var(--tinta);font-size:11px;line-height:1;
+               cursor:pointer;padding:0}
+.modelo:hover .quita{display:grid}
+.modelo .quita:hover{background:var(--alerta);color:#fff}
+
+/* El nombre de la seccion de iconos propios, con lo que ocupan. */
+.rotuloPequeno{display:flex;justify-content:space-between;align-items:baseline;
+               font-size:10.5px;font-weight:700;letter-spacing:.06em;
+               text-transform:uppercase;color:var(--tenue);margin:12px 0 6px}
+.rotuloPequeno b{font-weight:650;letter-spacing:0;text-transform:none;
+                 font-variant-numeric:tabular-nums}
+
+input[type=range]{width:100%;accent-color:var(--verde);margin:2px 0 0}
+
+/* --- El menú de subir una imagen -------------------------------------------
+   Mismo lenguaje que el panel: mismo fondo, mismo filo, mismo radio y el
+   verde institucional. Se ve que es algo que se abre encima del editor y no
+   otra pantalla.
+
+   A la izquierda va la vista previa con el recorte y el círculo puestos, para
+   ver cómo va a quedar antes de aceptar: la imagen original se recorta a lo
+   que no es transparente y se encaja en un cuadro, y eso no se sabe hasta
+   verlo. */
+#dialogo{position:fixed;inset:0;z-index:10;display:grid;place-items:center;
+         padding:16px;background:#0a484233;opacity:0;
+         transition:opacity .2s ease;pointer-events:none}
+#dialogo.abierto{opacity:1;pointer-events:auto}
+#dialogo[hidden]{display:none}
+#cajaDialogo{width:100%;max-width:520px;max-height:90vh;overflow-y:auto;
+             background:var(--panel);border:1px solid var(--linea);
+             border-radius:20px;padding:22px;scrollbar-width:none;
+             box-shadow:0 24px 60px #17322e33;
+             transform:translateY(12px) scale(.985);
+             transition:transform .24s cubic-bezier(.22,1,.36,1)}
+#cajaDialogo::-webkit-scrollbar{display:none}
+#dialogo.abierto #cajaDialogo{transform:none}
+#tDialogo{font-size:16px;font-weight:780;color:var(--tinta);
+          letter-spacing:-.01em}
+#cuerpoDialogo{display:grid;grid-template-columns:132px 1fr;gap:18px;
+               margin-top:16px}
+#vistaDialogo{display:flex;flex-direction:column;align-items:center;gap:8px}
+/* La vista previa se pinta sobre el mismo cuadriculado que se usa para ver
+   transparencias: así se entiende que lo que sobra es transparente y no
+   blanco. */
+#previoDialogo{width:112px;height:112px;flex:none;border-radius:16px;
+               border:1px solid var(--linea);
+               background-color:#fff;
+               background-image:
+                 linear-gradient(45deg,#e8efec 25%,transparent 25%),
+                 linear-gradient(-45deg,#e8efec 25%,transparent 25%),
+                 linear-gradient(45deg,transparent 75%,#e8efec 75%),
+                 linear-gradient(-45deg,transparent 75%,#e8efec 75%);
+               background-size:14px 14px;
+               background-position:0 0,0 7px,7px -7px,-7px 0}
+#previoDialogo .aro{fill:#ffffffdd;stroke:#0a484266;stroke-width:1}
+#previoDialogo .lam *{fill:none;stroke:var(--tinta);stroke-width:1.9;
+                      stroke-linecap:round;stroke-linejoin:round}
+#previoDialogo .lam .relleno{fill:var(--tinta);stroke:none}
+#previoDialogo.sinAro .lam{
+  filter:drop-shadow(0 0 1.6px #fff) drop-shadow(0 0 1.6px #fff)}
+#previoDialogo.sinAro .fig{clip-path:none}
+#previoDialogo .an{transform-box:fill-box;transform-origin:center}
+#previoDialogo .an.late{animation:icLate 2.4s ease-in-out infinite}
+#previoDialogo .an.flota{animation:icFlota 3.2s ease-in-out infinite}
+#previoDialogo .an.gira{animation:icGira 14s linear infinite}
+#previoDialogo .an.brilla{animation:icBrilla 2.6s ease-in-out infinite}
+#previoDialogo .an.ondas{animation:icOndas 2.6s ease-out infinite}
+#previoDialogo .an.vibra{animation:icVibra .22s linear infinite}
+#previoDialogo .an.viento{animation:icViento 3.4s ease-in-out infinite;
+                          transform-origin:50% 100%}
+#previoDialogo .onda{fill:none;stroke:var(--verde);stroke-width:1.6;
+                     stroke-opacity:.9}
+#nombreDialogo{font-size:10.5px;color:var(--tenue);text-align:center;
+               word-break:break-all;line-height:1.3}
+#ajustesDialogo .campo + .campo{margin-top:11px}
+
+/* En el móvil la vista previa pasa arriba y los ajustes debajo: dos columnas
+   en una pantalla estrecha dejan las dos cosas inservibles. */
+@media (max-width:560px){
+  #cuerpoDialogo{grid-template-columns:1fr;gap:14px}
+  #vistaDialogo{flex-direction:row;justify-content:center;gap:14px}
+  #previoDialogo{width:88px;height:88px}
+  #nombreDialogo{text-align:left}
+}
+
+/* lista de iconos colocados */
+#listaIconos{display:flex;flex-direction:column;gap:3px;max-height:170px;overflow-y:auto}
+.icono{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;
+       border:1px solid transparent;background:#f4f8f7;text-align:left;width:100%}
+.icono:hover{background:#eaf2f0}
+
+/* Una fila de la biblioteca: el botón de recuperar y, al lado, la × para
+   borrarla. La × sale al pasar por encima, para no llenar la lista de botones
+   rojos: borrar una imagen guardada es raro y recuperarla es lo de siempre. */
+.ficha{display:flex;align-items:center;gap:4px}
+.ficha .icono{flex:1;min-width:0}
+.quitaFicha{flex:none;width:24px;height:24px;padding:0;border:0;border-radius:8px;
+            display:none;place-content:center;background:#0a484214;color:var(--tinta);
+            font-size:14px;line-height:1;cursor:pointer}
+.ficha:hover .quitaFicha{display:grid}
+.quitaFicha:hover{background:var(--alerta);color:#fff}
+.icono.sel{border-color:var(--verde);background:#e6f2ec}
+.icono svg{width:19px;height:19px;flex:none}
+.icono svg *{fill:none;stroke:var(--tinta);stroke-width:2}
+.icono svg .relleno{fill:var(--tinta);stroke:none}
+.icono .nom{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+            font-weight:600;font-size:12.5px}
+.icono .coor{font-size:10.5px;color:var(--tenue);font-variant-numeric:tabular-nums}
+#sinIconos{font-size:12px;color:var(--tenue);padding:6px 2px}
+
+/* avisos */
+#avisos{display:flex;flex-direction:column;gap:6px}
+#avisos:empty::before{content:"Sin problemas. Todo listo para guardar.";
+                      font-size:12px;color:#0a5c33}
+.aviso{display:flex;gap:7px;font-size:12px;line-height:1.4;padding:7px 9px;
+       border-radius:8px;background:#fdecea;color:#8f1d16}
+.aviso.info{background:#eef4f2;color:var(--tenue)}
+.aviso b{flex:none}
+
+/* --- SVG del mapa --- */
+.hoja{fill:#f3f9ee}
+#gZonas .z{
+  fill:#00723f1f;stroke:var(--verde);stroke-width:1.5;cursor:move;
+  vector-effect:non-scaling-stroke;
+}
+#gZonas .z:hover{fill:#00723f33}
+#gZonas .z.sel{fill:#00723f33;stroke-width:2.5}
+#gZonas .z.mal{fill:#b3261e26;stroke:var(--alerta);stroke-width:2.5}
+
+/* --- Los adornos de las zonas ---------------------------------------------
+   El mismo aspecto que tendran en el mapa publicado, para poder verlo mientras
+   se edita y no despues de guardar.
+
+   El color va por variables y no a pelo, y estas reglas van ANTES de las de
+   `.sel` y `.mal`: asi el color de la zona es el que se eligio, pero el filo
+   de la zona elegida y el de la que tiene un problema siguen mandando por
+   encima. Al reves, el resaltado no se veria. */
+#gZonas .z.conRelleno{fill:var(--zf)}
+#gZonas .z.conLinea{stroke:var(--zl);stroke-width:2.5}
+#gZonas .z.punteada{stroke-dasharray:3 4}
+/* Las dos animaciones van en variables y las junta una sola regla, igual que
+   en el croquis: `animation` es una taquigrafia y la ultima regla que la toca
+   borra la anterior, asi que con una declaracion por clase una zona con
+   animacion de zona Y de borde solo se quedaba con la del borde. */
+#gZonas .z{animation:var(--az, none), var(--ab, none)}
+/* `camina` va despues de `.punteada` a proposito: las dos tienen la misma
+   fuerza, y la carretera necesita rayas mas largas que un punteado quieto. */
+#gZonas .z.zb-camina{
+  stroke-dasharray:calc(9 * var(--m, 1) * 1px) calc(7 * var(--m, 1) * 1px);
+  --ab:bordeCamina 1.6s linear infinite}
+/* La carretera al reves. Es la misma animacion con `reverse`, no un keyframe
+   aparte: el viaje es el mismo y lo unico que cambia es el sentido. */
+#gZonas .z.zb-camina.zd-reves{--ab:bordeCamina 1.6s linear infinite reverse}
+#gZonas .z.za-late{--az:zonaLate 3s ease-in-out infinite}
+#gZonas .z.za-brilla{--az:zonaBrilla 2.8s ease-in-out infinite}
+#gZonas .z.za-destello{--az:zonaDestello 4s ease-out infinite}
+#gZonas .z.zb-late{--ab:bordeLate 3s ease-in-out infinite}
+#gZonas .z.zb-brilla{--ab:bordeBrilla 2.8s ease-in-out infinite}
+#gZonas circle{
+  fill:#fff;stroke:var(--verde);stroke-width:2;cursor:grab;
+  vector-effect:non-scaling-stroke;
+}
+#gZonas circle:hover{fill:var(--oro)}
+#gZonas circle.mal{stroke:var(--alerta)}
+/* La esquina marcada, que es la que se lleva el boton de quitar. Va DESPUES de
+   `.mal` a proposito: en una zona con problemas hay que poder ver cual esta
+   marcada, y el filo rojo lo llevan todas las esquinas por igual. */
+#gZonas circle.acto{fill:var(--oro);stroke:#8a6a00;stroke-width:2.5}
+#gIconos g{cursor:move}
+#gIconos .aro{fill:#ffffffdd;stroke:#0a484266;stroke-width:1.2;
+              vector-effect:non-scaling-stroke}
+#gIconos .lam *{fill:none;stroke:var(--tinta);stroke-width:1.9;
+                stroke-linecap:round;stroke-linejoin:round;
+                vector-effect:non-scaling-stroke}
+#gIconos .lam .relleno{fill:var(--tinta);stroke:none}
+#gIconos g.sel .aro{stroke:var(--verde);stroke-width:2.5;stroke-opacity:1}
+/* Los que estan en la seleccion multiple llevan un filo grueso y distinto del
+   de «el elegido»: son dos cosas diferentes y hay que poder verlas a la vez
+   (uno elegido y varios marcados para alinear). */
+#gIconos g.multi .aro{stroke:var(--oro);stroke-width:3.5;stroke-opacity:1;
+                      fill:#fffbe9}
+/* El que lleva informacion se toca en el mapa publicado, asi que aqui se
+   marca: si no, no hay forma de saber cuales van a responder al dedo. */
+#gIconos g.conInfo .aro{stroke-dasharray:3.2 2.4}
+/* Los propios y los animados tambien se distinguen en el mapa del editor,
+   para no tener que ir uno por uno mirando el panel. */
+#gIconos g.animado .aro{stroke:#6f4bd8;stroke-opacity:.75}
+/* Vista previa de las animaciones mientras se edita. Son las mismas que las
+   del croquis publicado, para que lo que se ve aqui sea lo que sale alli. */
+#gIconos .an{transform-box:fill-box;transform-origin:center}
+#gIconos .an.late{animation:icLate 2.4s ease-in-out infinite}
+#gIconos .an.flota{animation:icFlota 3.2s ease-in-out infinite}
+#gIconos .an.gira{animation:icGira 14s linear infinite}
+#gIconos .an.brilla{animation:icBrilla 2.6s ease-in-out infinite}
+#gIconos .an.ondas{animation:icOndas 2.6s ease-out infinite}
+#gIconos .an.vibra{animation:icVibra .22s linear infinite}
+#gIconos .an.viento{animation:icViento 3.4s ease-in-out infinite;
+                    transform-origin:50% 100%}
+#gIconos .onda{fill:none;stroke:var(--verde);stroke-width:1.6;stroke-opacity:.9;
+               vector-effect:non-scaling-stroke}
+/* Igual que en el croquis publicado: sin circulo, el trazo lleva un halo
+   blanco para que no se pierda sobre el mapa. Aqui el mapa tambien es una
+   textura cargada, asi que hace falta lo mismo. */
+#gIconos g.sinAro .lam{filter:drop-shadow(0 0 1.6px #fff) drop-shadow(0 0 1.6px #fff)}
+#gIconos g.sinAro .fig{clip-path:none}
+/* Y el aro de las miniaturas, que va en su propio <svg> y no hereda lo de
+   arriba. Sin estas lineas los iconos de la paleta y de los modelos saldrian
+   sin fondo ni filo. */
+.palo svg .aro,.modelo svg .aro,.icono svg .aro{
+  fill:#ffffffdd;stroke:#0a484266;stroke-width:1.2}
+.palo svg.sinAro .lam,.modelo svg.sinAro .lam,.icono svg.sinAro .lam{
+  filter:drop-shadow(0 0 1.6px #fff) drop-shadow(0 0 1.6px #fff)}
+.palo svg.sinAro .fig,.modelo svg.sinAro .fig,.icono svg.sinAro .fig{
+  clip-path:none}
+/* Las miniaturas tambien se animan: asi se ve como va a quedar el icono antes
+   de ponerlo, y de paso se distinguen los modelos con animacion. */
+.palo svg,.modelo svg,.icono svg{overflow:visible}
+.palo svg .an,.modelo svg .an,.icono svg .an{
+  transform-box:fill-box;transform-origin:center}
+.palo svg .an.late,.modelo svg .an.late,.icono svg .an.late{
+  animation:icLate 2.4s ease-in-out infinite}
+.palo svg .an.flota,.modelo svg .an.flota,.icono svg .an.flota{
+  animation:icFlota 3.2s ease-in-out infinite}
+.palo svg .an.gira,.modelo svg .an.gira,.icono svg .an.gira{
+  animation:icGira 14s linear infinite}
+.palo svg .an.brilla,.modelo svg .an.brilla,.icono svg .an.brilla{
+  animation:icBrilla 2.6s ease-in-out infinite}
+.palo svg .an.ondas,.modelo svg .an.ondas,.icono svg .an.ondas{
+  animation:icOndas 2.6s ease-out infinite}
+.palo svg .an.vibra,.modelo svg .an.vibra,.icono svg .an.vibra{
+  animation:icVibra .22s linear infinite}
+.palo svg .an.viento,.modelo svg .an.viento,.icono svg .an.viento{
+  animation:icViento 3.4s ease-in-out infinite;transform-origin:50% 100%}
+
+/* --- Las animaciones -------------------------------------------------------
+   Las mismas que las del croquis publicado, y a proposito: son globales, asi
+   que una sola copia sirve para el mapa, la vista previa del dialogo y las
+   miniaturas. Si se cambia aqui, cambia en los tres sitios a la vez y no
+   pueden quedar distintas.
+
+   La INTENSIDAD va en la variable `--m` de cada icono. Dentro de un calc()
+   sirve para que la misma animacion mueva mucho o poco segun el icono, sin
+   duplicar los keyframes por cada fuerza. */
+@keyframes icLate{
+  0%,100%{transform:scale(1)}
+  50%{transform:scale(calc(1 + .1 * var(--m, 1)))}}
+@keyframes icFlota{
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(calc(-1.6px * var(--m, 1)))}}
+/* Una vuelta completa. No tiene intensidad: no hay nada que ampliar, asi que
+   el editor no ofrece el control para esta. */
+@keyframes icGira{to{transform:rotate(360deg)}}
+/* La opacidad la recorta el navegador al rango 0..1, asi que de mas de 1.7
+   hacia arriba ya no cambia nada. */
+@keyframes icBrilla{
+  0%,100%{opacity:1}
+  50%{opacity:calc(1 - .58 * var(--m, 1))}}
+@keyframes icOndas{
+  0%{transform:scale(1);opacity:.55}
+  70%{transform:scale(calc(1 + .9 * var(--m, 1)));opacity:0}
+  100%{transform:scale(calc(1 + .9 * var(--m, 1)));opacity:0}}
+/* Temblor: pasos cortos y en diagonal, cada uno hacia un lado distinto. */
+@keyframes icVibra{
+  0%,100%{transform:translate(0,0) rotate(0)}
+  12%{transform:translate(calc(-.5px * var(--m, 1)),calc(.15px * var(--m, 1)))
+     rotate(calc(-1deg * var(--m, 1)))}
+  25%{transform:translate(calc(.45px * var(--m, 1)),calc(-.2px * var(--m, 1)))
+     rotate(calc(.9deg * var(--m, 1)))}
+  37%{transform:translate(calc(-.35px * var(--m, 1)),calc(-.15px * var(--m, 1)))
+     rotate(calc(-.7deg * var(--m, 1)))}
+  50%{transform:translate(calc(.5px * var(--m, 1)),calc(.2px * var(--m, 1)))
+     rotate(calc(1.1deg * var(--m, 1)))}
+  62%{transform:translate(calc(-.4px * var(--m, 1)),calc(.1px * var(--m, 1)))
+     rotate(calc(-.9deg * var(--m, 1)))}
+  75%{transform:translate(calc(.3px * var(--m, 1)),calc(-.1px * var(--m, 1)))
+     rotate(calc(.6deg * var(--m, 1)))}
+  87%{transform:translate(calc(-.45px * var(--m, 1)),calc(.15px * var(--m, 1)))
+     rotate(calc(-1.1deg * var(--m, 1)))}}
+/* Viento: se dobla hacia un lado y vuelve, con una racha mas fuerte despues.
+   Son dos movimientos a la vez: el `rotate` inclina el icono sobre su base y
+   el `skewX` lo dobla por arriba, que es lo que hace un arbol. El sesgo va en
+   negativo para que sume con el giro: con el signo puesto, los dos empujan a
+   la copa en sentidos opuestos, se cancelan y el icono se queda casi quieto.
+
+   El pivote lo pone la regla de arriba, en la base y no en el centro. */
+@keyframes icViento{
+  0%,100%{transform:rotate(0) skewX(0)}
+  20%{transform:rotate(calc(3.2deg * var(--m, 1)))
+     skewX(calc(-2.2deg * var(--m, 1)))}
+  40%{transform:rotate(calc(1.2deg * var(--m, 1)))
+     skewX(calc(-0.8deg * var(--m, 1)))}
+  62%{transform:rotate(calc(5.5deg * var(--m, 1)))
+     skewX(calc(-3.6deg * var(--m, 1)))}
+  84%{transform:rotate(calc(2deg * var(--m, 1)))
+     skewX(calc(-1.3deg * var(--m, 1)))}}
+
+/* Y las de las zonas, que son de otra familia: no mueven `transform` sino
+   `opacity` y el trazo. La de la zona entera usa `opacity` (fondo y linea a la
+   vez) y la del borde usa `stroke-opacity` y `stroke-dashoffset` (solo la
+   linea). Son propiedades distintas, asi que las dos se pueden llevar a la vez
+   sin pisarse. */
+@keyframes zonaLate{
+  0%,100%{opacity:1}
+  50%{opacity:calc(1 - .45 * var(--m, 1))}}
+@keyframes zonaBrilla{
+  0%,100%{opacity:1}
+  50%{opacity:0}}
+@keyframes zonaDestello{
+  0%,12%,100%{opacity:1}
+  5%{opacity:calc(1 - .75 * var(--m, 1))}}
+@keyframes bordeLate{
+  0%,100%{stroke-opacity:.95}
+  50%{stroke-opacity:calc(.95 - .6 * var(--m, 1))}}
+@keyframes bordeBrilla{
+  0%,100%{stroke-opacity:1}
+  50%{stroke-opacity:0}}
+/* El desplazamiento tiene que ser EXACTAMENTE un periodo de guiones (9+7=16,
+   escalado por la intensidad) para que el bucle no de un tiron. Y en negativo,
+   porque el patron se mueve al reves que el desplazamiento.
+
+   El `* 1px` hace falta de verdad: sin el, el calculo da un numero sin unidad
+   y el navegador no lo interpola, asi que los guiones parpadean en el sitio en
+   vez de avanzar. Ver el comentario largo en croquis.html. */
+@keyframes bordeCamina{
+  to{stroke-dashoffset:calc(-16 * var(--m, 1) * 1px)}}
+/* Aqui no se quitan las animaciones al reducir el movimiento: en el editor son
+   la vista previa, y sin ellas no habria forma de elegir cual queda mejor. */
+#gAyudas{pointer-events:none}
+#gAyudas text{
+  fill:var(--tinta);font-weight:700;font-family:system-ui,sans-serif;
+  paint-order:stroke;stroke:#fff;stroke-width:3px;stroke-linejoin:round;
+}
+#gAyudas text.mal{fill:var(--alerta)}
+</style>
+</head>
+<body>
+
+<!-- El recorte de los iconos propios, para que se vean igual que en el mapa.
+     Va en un SVG oculto y se referencia desde los demas con url(#recorte),
+     que funciona porque todo esta en el mismo documento. Un id por cada SVG
+     seria el mismo id repetido, que el navegador resuelve como quiere. -->
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <defs><clipPath id="recorte"><circle cx="0" cy="0" r="12.2"/></clipPath></defs>
+</svg>
+
+<header id="barra">
+  <h1>Editor del croquis<small>Orgullo Cimarrón 2026 · solo en este equipo</small></h1>
+  <span id="marcaGit">…</span>
+  <span class="empuja"></span>
+  <span id="mensaje"></span>
+  <button class="boton" id="btnGuardar">Guardar</button>
+  <input type="text" id="commit" placeholder="Mensaje del cambio" style="width:230px">
+  <button class="boton principal" id="btnSubir">Subir a GitHub</button>
+</header>
+
+<!-- El editor carga su codigo UNA vez, al arrancar. Si se edita despues, el
+     que responde sigue siendo el de antes: guardar parece ir bien y el archivo
+     sale sin lo que ese codigo no conoce. Paso con el redondeo de las
+     esquinas, que se tiraba en silencio en cada guardado. -->
+<div id="reinicia" hidden>
+  <b>El editor se quedó viejo.</b>
+  Se abrió antes del último cambio de código, así que guardaría a medias lo que
+  todavía no conoce: todo lo que le pidas se vería en pantalla y no llegaría al
+  archivo. <b>Cierra esta pestaña y vuelve a arrancar
+  <code>editor/editor.py</code></b>. No se ha perdido nada; el croquis sigue
+  como estaba.
+</div>
+
+<main>
+  <div id="lienzo">
+    <svg id="s" preserveAspectRatio="xMidYMid meet">
+      <rect class="hoja" id="hoja" x="0" y="0" rx="0"/>
+      <image id="fondo" preserveAspectRatio="none"/>
+      <g id="gZonas"></g>
+      <g id="gIconos"></g>
+      <g id="gAyudas"></g>
+    </svg>
+    <div id="flotante">
+      <button class="boton" id="btnMenos" title="Alejar">−</button>
+      <button class="boton" id="btnMas" title="Acercar">+</button>
+      <button class="boton" id="btnTodo">Ver todo</button>
+      <button class="boton" id="btnVertice">Añadir vértice</button>
+      <button class="boton" id="btnQuitarVertice"
+              title="Quita la esquina marcada en dorado">Quitar vértice</button>
+    </div>
+    <div id="ayuda">
+      <b>Arrastra</b> los puntos blancos para mover las esquinas, o el interior de una zona para moverla entera · <b>Pulsa</b> un punto para marcarlo y quitarlo con el botón (o <b>doble clic</b>) · <b>Rueda</b> para acercar · <b>Flechas</b> mueven lo seleccionado (con Mayús, más rápido) · <b>Supr</b> borra
+    </div>
+  </div>
+
+  <aside id="panel">
+    <div class="bloque">
+      <h2>Antes de guardar</h2>
+      <div id="avisos"></div>
+    </div>
+
+    <!-- Las cuatro pestañas del panel. Cada una lleva su trozo de panel en un
+         `.hoja` hermano, con el mismo `data-panel`: asi no hay que mover nada
+         de sitio al cambiar, solo ensenar y esconder. -->
+    <div id="pestanas" role="tablist" aria-label="Secciones del editor">
+      <button class="pestana" type="button" role="tab"
+              data-panel="zona">Zona</button>
+      <button class="pestana" type="button" role="tab"
+              data-panel="iconos">Iconos</button>
+      <button class="pestana" type="button" role="tab"
+              data-panel="modelos">Modelos</button>
+      <button class="pestana" type="button" role="tab"
+              data-panel="mapa">Mapa</button>
+    </div>
+
+    <div class="hoja" data-panel="zona">
+
+    <div class="bloque">
+      <h2>Zonas del mapa</h2>
+      <div id="listaZonas"></div>
+      <div class="fila" style="margin-top:9px">
+        <button class="boton" id="btnNueva">Nueva zona</button>
+        <button class="boton peligro" id="btnBorrarZona">Borrar zona</button>
+      </div>
+    </div>
+
+    <div class="bloque" id="bloqueForm">
+      <h2>Datos de la zona</h2>
+      <div class="campo">
+        <label for="fNombre">Nombre en la ficha</label>
+        <input type="text" id="fNombre" placeholder="Rectoría · Exposición CGECDC">
+      </div>
+      <div class="campo">
+        <label for="fCorto">Nombre corto del botón</label>
+        <input type="text" id="fCorto" maxlength="22" placeholder="Rectoría">
+      </div>
+      <div class="campo">
+        <label for="fDesc">Descripción</label>
+        <textarea id="fDesc" rows="2" placeholder="La exposición del CGECDC…"></textarea>
+      </div>
+      <div class="campo">
+        <label class="marca" for="fRelleno">
+          <input type="checkbox" id="fRelleno">
+          <span>Con color de fondo</span>
+        </label>
+        <input type="color" id="cRelleno" value="#c8e6c9">
+        <div class="pista">
+          Sin esto la zona es invisible, como hasta ahora: solo sirve para
+          tocar. Con color se ve en el mapa publicado.
+        </div>
+      </div>
+      <div class="campo">
+        <label class="marca" for="fLinea">
+          <input type="checkbox" id="fLinea">
+          <span>Con línea de color</span>
+        </label>
+        <input type="color" id="cLinea" value="#00723f">
+        <div class="pista">
+          El borde de la zona. Al quitarla se van con ella el punteado y la
+          animación del borde, porque las dos son cosas de la línea.
+        </div>
+      </div>
+      <div class="campo" id="campoPunteada">
+        <label class="marca" for="fPunteada">
+          <input type="checkbox" id="fPunteada">
+          <span>Línea punteada</span>
+        </label>
+        <div class="pista">
+          Un punteado corto y apretado, para una línea quieta. La animación
+          <b>Camina</b> pone sus propias rayas, más largas y con más hueco, para
+          que se lean como la línea de una carretera en movimiento.
+        </div>
+      </div>
+      <div class="campo" id="campoRedondeo">
+        <label for="fRedondeo">Redondear las esquinas · <b id="vRedondeo">0</b></label>
+        <input type="range" id="fRedondeo" min="0" max="60" step="1" value="0">
+        <div class="pista" id="pistaRedondeo">
+          En 0 las esquinas quedan en ángulo recto. Las curvas se recortan solas
+          si el lado es más corto que el redondeo.
+        </div>
+      </div>
+      <div class="campo">
+        <label for="fAnimZona">Animación de la zona</label>
+        <select id="fAnimZona"></select>
+        <div class="pista">Mueve el fondo y la línea a la vez.</div>
+      </div>
+      <div class="campo">
+        <label for="fAnimBorde">Animación del borde</label>
+        <select id="fAnimBorde"></select>
+        <div class="pista">
+          Mueve solo la línea, sin tocar el fondo. Al elegir una se enciende la
+          línea si estaba apagada, porque el borde <b>es</b> la línea.
+        </div>
+      </div>
+      <div class="campo" id="campoSentido">
+        <label for="fSentido">Sentido del avance</label>
+        <select id="fSentido"></select>
+        <div class="pista" id="pistaSentido"></div>
+      </div>
+      <div class="campo" id="campoIntZona">
+        <label for="fIntZona">Intensidad del movimiento · <b id="vIntZona">1.0</b></label>
+        <input type="range" id="fIntZona" min="0.2" max="2.5" step="0.1" value="1">
+        <div class="pista" id="pistaIntZona"></div>
+      </div>
+    </div>
+    </div>
+
+    <div class="hoja" data-panel="iconos">
+
+    <div class="bloque">
+      <h2>Iconos</h2>
+      <div id="paleta"></div>
+      <div class="campo" style="margin-top:11px">
+        <label for="fTamNuevo">Tamaño de los nuevos</label>
+        <div class="fila">
+          <input type="range" id="fTamNuevo" min="16" max="400" step="1" value="46">
+          <input type="number" id="nTamNuevo" min="16" step="1" value="46"
+                 style="width:82px" aria-label="Tamaño de los nuevos, exacto">
+        </div>
+        <div class="pista">
+          La barra es para el ajuste rápido; en la casilla cabe cualquier tamaño.
+        </div>
+      </div>
+      <div class="fila" style="margin-top:10px">
+        <button class="boton" id="btnImagen">Subir una imagen…</button>
+        <input type="file" id="archivo" accept="image/*,.svg" hidden>
+        <input type="file" id="archivoCambio" accept="image/*,.svg" hidden>
+      </div>
+      <div class="pista">
+        PNG, JPG, WebP, GIF, BMP o <b>SVG</b>. El SVG no se pixela al
+        ampliarlo, así que es lo mejor para un logo.
+      </div>
+      <div id="listaPropios"></div>
+      <div id="listaBiblioteca"></div>
+      <div id="sinIconos" style="margin-top:10px">
+        Ninguno colocado. Arrastra uno de la paleta al mapa, o púlsalo y luego
+        haz clic en el sitio.
+      </div>
+      <div class="fila" style="margin-top:10px">
+        <button class="boton peligro" id="btnBorrarIconos">Borrar los colocados</button>
+      </div>
+      <div id="listaIconos"></div>
+    </div>
+
+    <div class="bloque" id="bloqueIcono">
+      <h2>Icono elegido</h2>
+      <div class="campo">
+        <label for="fEtiqueta">Nombre para lectores de pantalla</label>
+        <input type="text" id="fEtiqueta" maxlength="40">
+      </div>
+      <div class="campo">
+        <label for="fTam">Tamaño</label>
+        <div class="fila">
+          <input type="range" id="fTam" min="16" max="400" step="1" value="46">
+          <input type="number" id="nTam" min="16" step="1" value="46"
+                 style="width:82px" aria-label="Tamaño exacto">
+        </div>
+        <div class="pista">
+          La barra es para el ajuste rápido; en la casilla cabe cualquier tamaño.
+        </div>
+      </div>
+      <div class="campo">
+        <label for="fRot">Giro · <b id="vRot">0°</b></label>
+        <input type="range" id="fRot" min="-180" max="180" step="1" value="0">
+        <div class="fila" style="margin-top:6px">
+          <button class="boton chico" data-giro="-90">−90°</button>
+          <button class="boton chico" data-giro="-15">−15°</button>
+          <button class="boton chico" data-giro="15">+15°</button>
+          <button class="boton chico" data-giro="90">+90°</button>
+          <button class="boton chico" id="btnRot0">0°</button>
+        </div>
+      </div>
+      <div class="campo">
+        <label for="fAnim">Animación</label>
+        <select id="fAnim"></select>
+      </div>
+      <div class="campo" id="campoIntensidad">
+        <label for="fInt">Intensidad del movimiento · <b id="vInt">1.0</b></label>
+        <input type="range" id="fInt" min="0.2" max="2.5" step="0.1" value="1">
+        <div class="pista" id="pistaInt">
+          Cuánto se mueve, no a qué velocidad. Con 0.2 apenas se nota y con
+          2.5 el movimiento se ve desde lejos.
+        </div>
+      </div>
+      <div class="campo">
+        <label class="marca" for="fAro">
+          <input type="checkbox" id="fAro" checked>
+          <span>Con círculo de fondo</span>
+        </label>
+        <div class="pista">
+          Sin el círculo el icono se ve suelto. Los símbolos llevan un halo
+          blanco para que no se pierdan sobre el pasto.
+        </div>
+      </div>
+      <div class="campo" id="campoImagen" hidden>
+        <label>La imagen de este icono</label>
+        <div class="fila">
+          <button class="boton" id="btnCambiarImagen">Cambiar la imagen…</button>
+        </div>
+        <div class="pista" id="pistaImagen"></div>
+      </div>
+      <div class="campo">
+        <label for="fInfoTitulo">
+          Información que sale al pulsarlo
+        </label>
+        <input type="text" id="fInfoTitulo" maxlength="60"
+               placeholder="Déjalo vacío para que el icono no se pueda pulsar">
+        <textarea id="fInfoTexto" rows="3" style="margin-top:6px"
+                  placeholder="El texto que sale en la ventana. Con saltos de línea se ve tal cual."></textarea>
+        <div class="pista" id="pistaInfo"></div>
+      </div>
+      <div class="campo">
+        <label class="marca" for="fBoton">
+          <input type="checkbox" id="fBoton">
+          <span>Añadir un botón con enlace</span>
+        </label>
+        <div id="camposBoton" hidden>
+          <input type="text" id="fBotonTexto" maxlength="40"
+                 placeholder="Texto del botón · Programa del evento">
+          <select id="fBotonDestino" style="margin-top:6px"></select>
+          <input type="text" id="fBotonUrl" maxlength="300"
+                 placeholder="https://…" style="margin-top:6px">
+          <div class="pista" id="pistaDestino"></div>
+          <div class="pista" id="pistaBoton"></div>
+        </div>
+      </div>
+      <div class="fila" style="margin-top:11px">
+        <button class="boton peligro" id="btnBorrarIcono">Borrar icono</button>
+      </div>
+      <div class="fila" style="margin-top:7px">
+        <input type="text" id="fNombreModelo" maxlength="40"
+               placeholder="Nombre del modelo">
+        <button class="boton oro" id="btnModelo">Guardar como modelo</button>
+      </div>
+    </div>
+
+    <div class="bloque" id="bloqueAlinear">
+      <h2>Alinear los seleccionados</h2>
+      <div id="resumenSel" class="pista" style="margin:-4px 0 9px"></div>
+      <div class="fila">
+        <button class="boton" id="btnFila">En fila</button>
+        <button class="boton" id="btnColumna">En columna</button>
+        <button class="boton" id="btnRejilla">En rejilla</button>
+      </div>
+      <div class="pista">
+        Se colocan solos a partir de donde están ahora. Si no caben sin
+        tocarse, se quedan pegados: mejor eso que moverlos donde no van.
+      </div>
+      <div class="fila" style="margin-top:9px">
+        <button class="boton" id="btnLimpiarSel">Quitar la selección</button>
+      </div>
+    </div>
+    </div>
+
+    <div class="hoja" data-panel="modelos">
+
+    <div class="bloque" id="bloqueModelos">
+      <h2>Modelos</h2>
+      <div class="pista" style="margin:-4px 0 9px" id="resumenModelos"></div>
+      <div id="listaModelos"></div>
+    </div>
+
+    </div>
+
+    <div class="hoja" data-panel="mapa">
+
+    <div class="bloque">
+      <h2>Botón del panel</h2>
+      <label class="marca" for="mBoton">
+        <input type="checkbox" id="mBoton">
+        <span>Poner un botón debajo de los accesos rápidos</span>
+      </label>
+      <div class="pista">
+        Es el botón que sale al final del panel, debajo de los botones de las
+        zonas. Sirve para el programa del evento, una guía o un plano: se abre
+        en otra pestaña si es una dirección de fuera, y si es un archivo de
+        <b>RecursosExtra</b> se enseña dentro del mapa cuando es una imagen y
+        se descarga cuando no.
+      </div>
+      <div id="camposMapa" hidden>
+        <div class="campo" style="margin-top:10px">
+          <label for="mTexto">Texto del botón</label>
+          <input type="text" id="mTexto" maxlength="40"
+                 placeholder="Programa del evento">
+        </div>
+        <div class="campo">
+          <label for="mDestino">A dónde lleva</label>
+          <select id="mDestino"></select>
+          <input type="text" id="mUrl" maxlength="300"
+                 placeholder="https://…" style="margin-top:6px">
+          <div class="pista" id="mPista"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bloque">
+      <h2>Estado del repositorio</h2>
+      <div id="infoGit"></div>
+    </div>
+
+    <div class="bloque">
+      <h2>Qué hay en el mapa</h2>
+      <div id="infoMapa"></div>
+    </div>
+
+    <div class="bloque">
+      <h2>El croquis publicado</h2>
+      <div class="pista">
+        Es de solo lectura: quien abre el QR solo puede mirarlo. Todo lo que se
+        cambia aquí vive en este equipo hasta que se pulsa <b>Guardar</b> y
+        luego <b>Subir a GitHub</b>. La dirección tarda uno o dos minutos en
+        actualizarse, porque GitHub Pages rehace la página entera y el
+        navegador guarda la copia vieja diez minutos.
+      </div>
+      <div class="fila" style="margin-top:10px">
+        <a class="boton" id="enlacePublicado" target="_blank"
+           rel="noopener">Abrir el croquis publicado</a>
+      </div>
+    </div>
+
+    </div>
+  </aside>
+</main>
+
+<!-- El menú que sale al subir una imagen. Antes la imagen entraba directa a la
+     paleta, con el tamaño de los nuevos y sin animación ni forma de decir si
+     llevaba círculo; ahora se elige ahí mismo, y esos valores quedan como los
+     de ese icono para siempre. Después cada icono colocado se puede cambiar
+     como cualquier otro.
+
+     Empieza en `hidden`, que además de esconderlo lo saca del alcance del
+     teclado: con solo opacidad, sus botones seguirían siendo tabulables. -->
+<div id="dialogo" hidden>
+  <div id="cajaDialogo" role="dialog" aria-modal="true" aria-labelledby="tDialogo">
+    <strong id="tDialogo">Nuevo icono</strong>
+    <div id="cuerpoDialogo">
+      <div id="vistaDialogo">
+        <svg id="previoDialogo" viewBox="-16 -16 32 32"></svg>
+        <div class="pista" id="nombreDialogo"></div>
+      </div>
+      <div id="ajustesDialogo">
+        <div class="campo" id="campoDNombre">
+          <label for="dNombre">Nombre</label>
+          <input type="text" id="dNombre" maxlength="24"
+                 placeholder="extintor">
+          <div class="pista">
+            Es el nombre con el que se guarda. Se le añade un número si ya
+            existe otro igual.
+          </div>
+        </div>
+        <div class="campo">
+          <label for="dTam">Tamaño</label>
+          <div class="fila">
+            <input type="range" id="dTam" min="16" max="400" step="1" value="46">
+            <input type="number" id="nDTam" min="16" step="1" value="46"
+                   style="width:82px" aria-label="Tamaño exacto">
+          </div>
+        </div>
+        <div class="campo">
+          <label for="dAnim">Animación</label>
+          <select id="dAnim"></select>
+        </div>
+        <div class="campo" id="campoDIntensidad">
+          <label for="dInt">Intensidad del movimiento · <b id="vDInt">1.0</b></label>
+          <input type="range" id="dInt" min="0.2" max="2.5" step="0.1" value="1">
+        </div>
+        <div class="campo">
+          <label class="marca" for="dAro">
+            <input type="checkbox" id="dAro" checked>
+            <span>Con círculo de fondo</span>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="fila" style="margin-top:16px;justify-content:flex-end">
+      <button class="boton" id="btnCancelarDialogo">Cancelar</button>
+      <button class="boton principal" id="btnAceptarDialogo">Añadir a la paleta</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Estado. Todo vive aqui y el SVG se vuelve a dibujar entero en cada cambio:
+// con once zonas y un puñado de iconos, reconstruir es mas rapido que
+// averiguar que hay que actualizar, y no hay forma de que el dibujo y los
+// datos se desincronicen.
+// ---------------------------------------------------------------------------
+var E = {zonas: [], iconos: [], simbolos: {}, formas: {}, propios: {}, avisos: [],
+         biblioteca: [], modelos: [], animaciones: {}, sinIntensidad: [],
+         // Las animaciones de las zonas, que son otras que las de los iconos:
+         // la de la zona mueve el fondo y la linea, y la del borde solo la
+         // linea. Las manda el servidor, que es quien las valida.
+         animacionesZona: {}, animacionesBorde: {},
+         // Hacia donde avanza la linea de `camina`. Lo manda el servidor, que
+         // es quien valida: aqui no puede haber una lista propia que un dia
+         // diga algo distinto.
+         sentidosCamina: {},
+         // El servidor avisa si arranco antes del ultimo cambio de codigo. Un
+         // editor viejo y uno al dia responden igual desde dentro, asi que
+         // esta es la unica señal que puede dar de que se quedo atras.
+         codigoViejo: false,
+         // Los archivos de RecursosExtra que se pueden enlazar. Los manda el
+         // servidor, que es quien lee la carpeta.
+         recursos: [],
+         // El boton del croquis: {t: texto, u: destino}, o null si no hay.
+         enlace: null,
+         // Los ajustes con los que se subio cada icono propio: tamano,
+         // animacion, intensidad y circulo. Es lo que hace que al ponerlo en el
+         // mapa salga como se dejo. Lo manda el servidor, que los guarda al
+         // lado del PNG.
+         ajustesPropios: {},
+         // Cuales de esos iconos son vectores. Un SVG no se pixela al
+         // ampliarlo y un PNG si, asi que conviene saberlo al elegir con cual
+         // hacer un icono que se va a ver de cerca.
+         vectores: {},
+         topes: {tam: [16, 160], rot: [-180, 180]},
+         vista: [110, 100, 1005, 640], ancho: 1224, alto: 792, git: {}};
+var sel = null;          // {tipo:"zona"|"icono", i: n}
+var multi = [];          // indices de iconos marcados para alinear
+var vb = {x: 0, y: 0, w: 1224, h: 792};
+var sucio = false;       // hay cambios sin guardar
+var modoVertice = false; // el siguiente clic mete una esquina nueva
+// Cual de las esquinas de la zona elegida esta marcada, o null si ninguna.
+// Es la que se lleva el boton de quitar, y el indice vale DENTRO de esa zona:
+// de ahi que se borre al cambiar de zona, o quitar se llevaria por delante un
+// punto de otra.
+var verticeSel = null;
+
+// Lo que se estampa al hacer clic en el mapa, o null si no se esta estampando
+// nada. Es un objeto con la configuracion COMPLETA del icono (tipo, tamano,
+// giro, animacion, circulo, informacion) menos la posicion, que la pone el
+// clic. Sale de pulsar un simbolo de la paleta o un modelo, y NO se limpia al
+// colocar: se queda puesto para poder poner varios seguidos. Se sale con
+// Escape o volviendo a pulsar lo mismo.
+var estampa = null;
+// El zoom se junta aqui y se aplica una vez por fotograma.
+var zoomPend = null, zoomRaf = 0;
+
+var s = document.getElementById("s"),
+    gZonas = document.getElementById("gZonas"),
+    gIconos = document.getElementById("gIconos"),
+    gAyudas = document.getElementById("gAyudas"),
+    fondo = document.getElementById("fondo"),
+    hoja = document.getElementById("hoja"),
+    listaZonas = document.getElementById("listaZonas"),
+    listaIconos = document.getElementById("listaIconos"),
+    paleta = document.getElementById("paleta"),
+    avisos = document.getElementById("avisos"),
+    mensaje = document.getElementById("mensaje"),
+    marcaGit = document.getElementById("marcaGit"),
+    infoGit = document.getElementById("infoGit"),
+    infoMapa = document.getElementById("infoMapa"),
+    fNombre = document.getElementById("fNombre"),
+    fCorto = document.getElementById("fCorto"),
+    fDesc = document.getElementById("fDesc"),
+    fRelleno = document.getElementById("fRelleno"),
+    cRelleno = document.getElementById("cRelleno"),
+    fLinea = document.getElementById("fLinea"),
+    cLinea = document.getElementById("cLinea"),
+    fPunteada = document.getElementById("fPunteada"),
+    fRedondeo = document.getElementById("fRedondeo"),
+    fAnimZona = document.getElementById("fAnimZona"),
+    fAnimBorde = document.getElementById("fAnimBorde"),
+    fSentido = document.getElementById("fSentido"),
+    fIntZona = document.getElementById("fIntZona"),
+    fTam = document.getElementById("fTam"),
+    fTamNuevo = document.getElementById("fTamNuevo"),
+    nTam = document.getElementById("nTam"),
+    nTamNuevo = document.getElementById("nTamNuevo"),
+    fRot = document.getElementById("fRot"),
+    fAnim = document.getElementById("fAnim"),
+    fInt = document.getElementById("fInt"),
+    campoIntensidad = document.getElementById("campoIntensidad"),
+    fEtiqueta = document.getElementById("fEtiqueta"),
+    fInfoTitulo = document.getElementById("fInfoTitulo"),
+    fInfoTexto = document.getElementById("fInfoTexto"),
+    fBoton = document.getElementById("fBoton"),
+    fBotonDestino = document.getElementById("fBotonDestino"),
+    pistaDestino = document.getElementById("pistaDestino"),
+    mPista = document.getElementById("mPista"),
+    mBoton = document.getElementById("mBoton"),
+    mTexto = document.getElementById("mTexto"),
+    mDestino = document.getElementById("mDestino"),
+    mUrl = document.getElementById("mUrl"),
+    campoMapaUrl = document.getElementById("campoMapaUrl"),
+    camposMapa = document.getElementById("camposMapa"),
+    camposBoton = document.getElementById("camposBoton"),
+    fBotonTexto = document.getElementById("fBotonTexto"),
+    fBotonUrl = document.getElementById("fBotonUrl"),
+    fAro = document.getElementById("fAro"),
+    fNombreModelo = document.getElementById("fNombreModelo"),
+    listaPropios = document.getElementById("listaPropios"),
+    listaBiblioteca = document.getElementById("listaBiblioteca"),
+    listaModelos = document.getElementById("listaModelos"),
+    DIA = document.getElementById("dialogo"),
+    PREVIO = document.getElementById("previoDialogo"),
+    dNombre = document.getElementById("dNombre"),
+    dTam = document.getElementById("dTam"),
+    nDTam = document.getElementById("nDTam"),
+    dAnim = document.getElementById("dAnim"),
+    dInt = document.getElementById("dInt"),
+    campoDIntensidad = document.getElementById("campoDIntensidad"),
+    dAro = document.getElementById("dAro"),
+    campoImagen = document.getElementById("campoImagen"),
+    pistaImagen = document.getElementById("pistaImagen"),
+    btnCambiarImagen = document.getElementById("btnCambiarImagen"),
+    archivoCambio = document.getElementById("archivoCambio");
+
+// La imagen que se acaba de elegir y todavia no se ha aceptado, como data URL.
+// Vive aqui mientras el menú está abierto: hasta que se pulsa Añadir no se
+// manda nada al servidor, así que cancelar no deja rastro.
+var imagenPendiente = null;
+
+// Cuando el menú se abre para cambiar la imagen de un icono que ya está en el
+// mapa, aquí va su tipo. En ese caso el nombre NO se elige: se conserva el que
+// ya tiene, y por eso el cambio alcanza a todos los iconos de ese tipo a la
+// vez, que es justo lo que se busca.
+var reemplazo = null;
+
+// Una pila de estados anteriores de los iconos, para poder deshacer un
+// borrado. Guarda copias enteras, no diferencias: con un puñado de iconos una
+// copia ocupa nada y no hay forma de que el deshacer se desincronice.
+//
+// Es a propósito solo para borrados, que es lo único del editor que no se
+// puede rehacer a mano. Mover o cambiar un tamaño se arregla moviéndolo otra
+// vez, y llenar la pila con eso haría que Ctrl+Z dejara de hacer lo que uno
+// espera.
+var historial = [];
+var MAX_HISTORIAL = 20;
+
+function apuntaHistorial() {
+  historial.push(JSON.stringify(E.iconos));
+  if (historial.length > MAX_HISTORIAL) historial.shift();
+}
+
+function deshacer() {
+  if (!historial.length) { aviso("No hay nada que deshacer.", "aviso"); return }
+  E.iconos = JSON.parse(historial.pop());
+  sel = null;
+  multi = [];
+  hayCambios();
+  aviso("Deshecho. Quedan " + historial.length + " paso(s) por deshacer.", "ok");
+}
+
+// Lo que mide un icono cuando no lleva tamano propio. Tiene que ser el mismo
+// que TAM_ICONO en croquis.html.
+var TAM_ICONO = 46;
+var VERTICE = 5.5;    // radio en unidades de mapa, se reajusta con el zoom
+
+function escapa(t) {
+  return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function tamDe(ic) { return ic.s || TAM_ICONO; }
+function nombreDe(tipo) { return E.simbolos[tipo] || tipo; }
+// `c` en 0 es «sin círculo». Se comprueba con `in` y no por lo que valga,
+// porque 0 es un valor legítimo y un `if (!ic.c)` lo tomaría por ausencia.
+function conAroDe(ic) { return !("c" in ic) || !!ic.c; }
+function rotDe(ic) { return ic.r || 0; }
+
+// La intensidad del movimiento, como atributo suelto para el grupo de fuera.
+//
+// Va en el grupo de FUERA y no en el animado: un `style` que solo pone una
+// variable no pisa el `transform` del elemento que lo lleva, y desde ahi se
+// hereda hacia dentro, que es donde lo leen los keyframes. Ponerlo en el
+// grupo animado tambien funcionaria, pero este es el que ya se construye en
+// los tres sitios y no hay que tocar el dibujo.
+//
+// Se omite cuando vale 1, que es lo de siempre, para no llenar de atributos el
+// mapa que se publica.
+function fuerzaDe(ic) {
+  return (typeof ic.m === "number" && ic.m !== 1) ? ' style="--m:' + ic.m + '"' : "";
+}
+
+// La intensidad que tiene un icono, con la de fabrica si no lleva ninguna.
+function intDe(ic) { return typeof ic.m === "number" ? ic.m : 1; }
+
+// Las animaciones que no tienen intensidad que ajustar, porque dan una vuelta
+// completa y no hay nada que ampliar. Las manda el servidor junto con la lista
+// de animaciones: dos listas separadas acabarian diciendo cosas distintas.
+function sinIntensidad(anim) { return E.sinIntensidad.indexOf(anim || "") >= 0; }
+
+// Los tipos cuyo SVG ya esta metido en el documento como `<symbol>`, para
+// pintarlos con `<use>` en vez de con `<image>`. Ver `sueltaVectores`.
+var SIMB_VEC = {};
+
+// Mete en el `<defs>` un `<symbol>` por cada icono propio vectorial que aun no
+// lo tenga, y lo apunta en `SIMB_VEC`. Se llama al empezar `dibuja`, asi que da
+// igual cuando lleguen los vectores: el primero que los vea los suelta.
+//
+// El SVG viene ya preparado por el servidor (las clases y los ids con el nombre
+// delante), que es lo que evita que dos iconos se pisen los estilos al convivir
+// en el mismo documento.
+function sueltaVectores() {
+  if (!E.vectoresSvg) return;
+  var defs = s.querySelector("defs");
+  if (!defs) return;
+  var trozos = [];
+  Object.keys(E.vectoresSvg).forEach(function (nombre) {
+    if (SIMB_VEC[nombre]) return;
+    var svg = E.vectoresSvg[nombre];
+    if (typeof svg !== "string" || !/^\s*<svg[\s>]/.test(svg)) return;
+    var caja = /\bviewBox="([^"]*)"/.exec(svg);
+    var abre = svg.indexOf(">"), cierra = svg.lastIndexOf("</svg>");
+    if (!caja || abre < 0 || cierra < abre) return;
+    trozos.push('<symbol id="edv-' + nombre + '" viewBox="' + caja[1] + '">'
+              + svg.slice(abre + 1, cierra) + "</symbol>");
+    SIMB_VEC[nombre] = true;
+  });
+  if (trozos.length) defs.insertAdjacentHTML("beforeend", trozos.join(""));
+}
+
+// Olvida el simbolo de un icono, para que se vuelva a soltar con su version
+// nueva. Se llama al cambiarle la imagen, quitarlo o recuperarlo.
+function olvidaVector(nombre) {
+  delete SIMB_VEC[nombre];
+  if (E.vectoresSvg) delete E.vectoresSvg[nombre];
+  var viejo = s.querySelector('[id="edv-' + nombre + '"]');
+  if (viejo) viejo.parentNode.removeChild(viejo);
+}
+
+// Apunta el SVG listo de un icono para que `sueltaVectores` lo monte. Sin
+// vector (o sin SVG que se pueda dejar suelto) no hace nada.
+function apuntaVector(nombre, listo) {
+  if (!listo) return;
+  if (!E.vectoresSvg) E.vectoresSvg = {};
+  E.vectoresSvg[nombre] = listo;
+}
+
+// El dibujo de un icono: o la forma del simbolo, o la imagen propia. Se usa en
+// el mapa, en la paleta, en las listas y en los modelos, para que lo que se
+// elige sea exactamente lo que se va a ver.
+//
+// El recorte en circulo de las imagenes y el aro van juntos: sin circulo, la
+// imagen tambien pierde el recorte y sale como es.
+//
+// Un icono propio vectorial se pinta con `<use>` sobre su `<symbol>`, no con un
+// `<image>`: asi el area clicable es lo que esta pintado y no el rectangulo
+// entero, y los huecos transparentes del dibujo no cuentan como icono.
+function figuraDe(tipo, conAro) {
+  if (E.formas[tipo]) return '<g class="lam">' + E.formas[tipo] + "</g>";
+  if (E.propios[tipo]) {
+    var recorte = conAro ? ' clip-path="url(#recorte)"' : "";
+    if (SIMB_VEC[tipo]) {
+      return '<use class="fig" href="#edv-' + tipo + '" x="-12.2" y="-12.2"'
+           + ' width="24.4" height="24.4"' + recorte + "/>";
+    }
+    return '<image class="fig" href="' + E.propios[tipo] + '" x="-12.2" y="-12.2"'
+         + ' width="24.4" height="24.4"' + recorte + "/>";
+  }
+  return "";
+}
+
+// El transform completo de un icono, igual que el que arma croquis.html:
+// primero al sitio, luego el tamano y al final el giro, para que la rotacion
+// sea sobre su propio centro.
+function transformDe(ic) {
+  return "translate(" + ic.x + "," + ic.y + ") scale(" + (tamDe(ic) / 24) + ")"
+       + (ic.r ? " rotate(" + ic.r + ")" : "");
+}
+
+// El grupo animado de dentro, con el anillo de las ondas si toca. El de fuera
+// es el que lleva la posicion y no se puede animar: en SVG el transform de CSS
+// pisa al atributo transform y el icono se iria a la esquina.
+function dentroConAnimacion(ic) {
+  var conAro = conAroDe(ic);
+  var forma = figuraDe(ic.t, conAro);
+  if (!forma) return "";
+  var clase = "an" + (ic.a ? " " + ic.a : "");
+  var ondas = ic.a === "ondas" ? '<circle class="onda" r="13.4"/>' : "";
+  return '<g class="' + clase + '">' + ondas + forma + "</g>";
+}
+
+// El dibujo de un icono dentro de una caja de 32x32, sin el <svg> que lo
+// envuelve. Se separa de miniaturaDe para poder reusarlo en la vista previa
+// del menú de subir, que es un <svg> que ya está en la pagina y al que solo
+// hay que cambiarle las tripas.
+function contenidoMiniatura(ic, hrefPropio) {
+  var conAro = conAroDe(ic);
+  var forma = hrefPropio
+    ? '<image class="fig" href="' + hrefPropio + '" x="-12.2" y="-12.2"'
+      + ' width="24.4" height="24.4"' + (conAro ? ' clip-path="url(#recorte)"' : "")
+      + "/>"
+    : figuraDe(ic.t, conAro);
+  if (!forma) return "";
+  var clase = "an" + (ic.a ? " " + ic.a : "");
+  var ondas = ic.a === "ondas" ? '<circle class="onda" r="13.4"/>' : "";
+  // El giro va en un grupo propio para no pisar el del tamaño, igual que en el
+  // mapa: el giro tiene que ser lo último. Y la intensidad va en ese mismo
+  // grupo de fuera, que es de donde la hereda el de la animación.
+  return "<g" + (ic.r ? ' transform="rotate(' + ic.r + ')"' : "")
+       + fuerzaDe(ic) + ">"
+       + (conAro ? '<circle class="aro" r="13.4"/>' : "")
+       + '<g class="' + clase + '">' + ondas + forma + "</g></g>";
+}
+
+// Un icono dibujado entero dentro de su caja, para las miniaturas (la paleta,
+// los modelos y la lista).
+function miniaturaDe(ic) {
+  var contenido = contenidoMiniatura(ic);
+  if (!contenido) return "";
+  return '<svg viewBox="-16 -16 32 32"' + (conAroDe(ic) ? "" : ' class="sinAro"')
+       + ">" + contenido + "</svg>";
+}
+function aviso(texto, tipo) {
+  if (!texto) { mensaje.textContent = ""; mensaje.className = ""; return; }
+  mensaje.textContent = texto;
+  mensaje.className = tipo || "";
+}
+
+// --- geometria, calcada de editor/validar.py (que es la que decide de verdad)
+function cajaDe(puntos) {
+  var xs = puntos.map(function (p) { return p[0] }), ys = puntos.map(function (p) { return p[1] });
+  var x = Math.min.apply(null, xs), y = Math.min.apply(null, ys);
+  return [x, y, Math.max.apply(null, xs) - x, Math.max.apply(null, ys) - y];
+}
+function areaDe(puntos) {
+  var a = 0;
+  for (var i = 0; i < puntos.length; i++) {
+    var p = puntos[i], q = puntos[(i + 1) % puntos.length];
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return Math.abs(a) / 2;
+}
+function proyecta(pts, e) {
+  var v = pts.map(function (p) { return p[0] * e[0] + p[1] * e[1] });
+  return [Math.min.apply(null, v), Math.max.apply(null, v)];
+}
+function sePisan(a, b) {
+  var listas = [a, b], i, j, k;
+  for (k = 0; k < 2; k++) {
+    for (i = 0; i < listas[k].length; i++) {
+      var p1 = listas[k][i], p2 = listas[k][(i + 1) % listas[k].length];
+      var dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+      var largo = Math.sqrt(dx * dx + dy * dy);
+      if (!largo) continue;
+      var e = [-dy / largo, dx / largo];
+      var A = proyecta(a, e), B = proyecta(b, e);
+      if (A[1] < B[0] || B[1] < A[0]) return false;
+    }
+  }
+  return true;
+}
+
+// Lo que dice el servidor (editor/validar.py). Aquí se adelanta para avisar
+// mientras se edita y no al pulsar Guardar; el que decide es el servidor.
+var TAM_MIN = 16, TAM_MAX = 100000, ROT_MIN = -180, ROT_MAX = 180;
+// El tope de la BARRA de tamaño. No es el maximo de verdad, que es TAM_MAX y
+// lo manda el servidor: es hasta donde llega la barra. La barra esta para
+// ajustar rapido los tamaños normales, y en la casilla de al lado cabe
+// cualquiera. Con la barra hasta TAM_MAX (100000) no se podria ni elegir 50.
+var TAM_BARRA = 400;
+var TIT_MAX = 60, TEX_MAX = 600;
+// Los topes del boton con enlace de la ventana.
+var BOT_MAX = 40, URL_MAX = 300;
+// Los colores de los adornos de una zona, en la forma #rrggbb. Tiene que ser la
+// misma que exige el servidor: aqui se adelanta el aviso para no llegar al
+// guardado con un color que va a rebotar.
+var COLOR = /^#[0-9a-fA-F]{6}$/;
+// El tope del redondeo de las esquinas, que tambien manda el servidor.
+var RD_MAX = 60;
+
+function problemas() {
+  var mal = E.zonas.map(function () { return [] });
+  E.zonas.forEach(function (z, k) {
+    var p = z[2], ancho = E.ancho, alto = E.alto;
+    if (z[1].length > 22) mal[k].push("El nombre corto no cabe en el botón (máximo 22).");
+    if (!z[0].trim()) mal[k].push("Falta el nombre que sale en la ficha.");
+    if (!z[1].trim()) mal[k].push("Falta el nombre corto del botón.");
+    if (z[3].trim().length < 10) mal[k].push("La descripción es demasiado corta.");
+    if (p.length < 3) mal[k].push("La zona necesita al menos 3 esquinas.");
+    var c = cajaDe(p);
+    if (c[0] < 0 || c[1] < 0 || c[0] + c[2] > ancho || c[1] + c[3] > alto)
+      mal[k].push("Se sale del mapa.");
+    if (c[2] < 20 || c[3] < 20) mal[k].push("Es muy pequeña para tocarla con el dedo.");
+    else if (areaDe(p) < 400) mal[k].push("El área es muy pequeña.");
+
+    // Los adornos: el color del fondo, el de la linea, el punteado y las dos
+    // animaciones. Se adelantan aqui para que el boton de Guardar se apague
+    // antes de intentarlo, en vez de que el servidor rebote el guardado entero
+    // y haya que buscar cual de las diez zonas es la del problema.
+    var ad = (z.length > 4 && z[4]) ? z[4] : {};
+    if (ad.f && !COLOR.test(ad.f))
+      mal[k].push("El color de fondo no es un color válido.");
+    if (ad.l && !COLOR.test(ad.l))
+      mal[k].push("El color de la línea no es un color válido.");
+    if (ad.rd !== undefined && (ad.rd < 1 || ad.rd > RD_MAX))
+      mal[k].push("El redondeo " + ad.rd + " se sale de 1 a " + RD_MAX + ".");
+    if (ad.a && !E.animacionesZona[ad.a])
+      mal[k].push("La animación de la zona «" + ad.a + "» no existe.");
+    if (ad.b && !E.animacionesBorde[ad.b])
+      mal[k].push("La animación del borde «" + ad.b + "» no existe.");
+    // El punteado y la animacion del borde necesitan linea: sin ella no hay
+    // nada que puntear ni que animar.
+    if (ad.p && !ad.l)
+      mal[k].push("La línea está punteada pero no tiene color.");
+    if (ad.b && !ad.l)
+      mal[k].push("El borde tiene animación pero la línea no tiene color.");
+    // El sentido solo lo tiene `camina`, que es la unica que recorre el borde.
+    if (ad.d !== undefined && ad.d !== -1)
+      mal[k].push("El sentido «" + ad.d + "» no existe: o normal, o al revés.");
+    if (ad.d !== undefined && ad.b !== "camina")
+      mal[k].push("El sentido del avance es cosa de la animación «Camina».");
+    if (ad.m !== undefined && !(ad.a || ad.b))
+      mal[k].push("Hay intensidad pero ninguna animación que ajustar.");
+    if (ad.m !== undefined && (ad.m < 0.2 || ad.m > 2.5))
+      mal[k].push("La intensidad " + ad.m + " se sale de 0.2 a 2.5.");
+  });
+  for (var a = 0; a < E.zonas.length; a++)
+    for (var b = a + 1; b < E.zonas.length; b++)
+      if (sePisan(E.zonas[a][2], E.zonas[b][2])) {
+        mal[a].push("Se solapa con «" + E.zonas[b][1] + "».");
+        mal[b].push("Se solapa con «" + E.zonas[a][1] + "».");
+      }
+  return { zonas: mal, iconos: problemasDeIconos() };
+}
+
+// Los problemas de cada icono, en el mismo orden que la lista. Un tipo que no
+// exista o un tamaño fuera de rango dan un icono que no se dibuja o que tapa
+// media zona, y las dos cosas pasan sin ningun error en la consola.
+function problemasDeIconos() {
+  return E.iconos.map(function (ic) {
+    var mal = [];
+    if (!E.formas[ic.t] && !E.propios[ic.t]) {
+      mal.push("El tipo «" + ic.t + "» no existe"
+             + (E.propios[ic.t] === undefined && ic.t.indexOf("-") > 0
+                ? ". Puede que le hayas quitado la imagen que usaba." : "."));
+    }
+    if (ic.x < 12 || ic.y < 12 || ic.x > E.ancho - 12 || ic.y > E.alto - 12)
+      mal.push("Está pegado al borde del mapa.");
+    var t = tamDe(ic);
+    if (t < TAM_MIN || t > TAM_MAX)
+      mal.push("El tamaño " + Math.round(t) + " se sale de " + TAM_MIN + " a " + TAM_MAX + ".");
+    if (ic.r !== undefined && (ic.r < ROT_MIN || ic.r > ROT_MAX))
+      mal.push("El giro " + Math.round(ic.r) + "° se sale de " + ROT_MIN + " a " + ROT_MAX + ".");
+    if (ic.a && !E.animaciones[ic.a])
+      mal.push("La animación «" + ic.a + "» no existe.");
+    if (ic.m !== undefined && sinIntensidad(ic.a))
+      mal.push("La animación «" + ic.a + "» no tiene intensidad que ajustar.");
+    if (ic.i) {
+      if (!ic.i[0].trim()) mal.push("La información no tiene título.");
+      else if (ic.i[0].length > TIT_MAX)
+        mal.push("El título de la información pasa de " + TIT_MAX + " caracteres.");
+      if (!ic.i[1].trim()) mal.push("La información no tiene texto.");
+      else if (ic.i[1].length > TEX_MAX)
+        mal.push("El texto de la información pasa de " + TEX_MAX + " caracteres.");
+    }
+    // El boton con enlace. Se avisa aqui ademas de en la pista del campo
+    // porque estos avisos son los que apagan el boton de Guardar: sin esto, el
+    // editor dejaba guardar y era el servidor el que rebotaba el guardado
+    // entero con un mensaje que no dice en cual de los 28 iconos esta el
+    // problema.
+    if (ic.u) {
+      if (!ic.u[0].trim()) mal.push("El botón no tiene texto.");
+      else if (ic.u[0].length > BOT_MAX)
+        mal.push("El texto del botón pasa de " + BOT_MAX + " caracteres.");
+      if (!enlaceValido(ic.u[1]))
+        mal.push("La dirección del botón tiene que empezar por https:// o "
+               + "http://; un enlace sin esquema se toma por una ruta de esta "
+               + "página.");
+      if (!ic.i) mal.push("Tiene un botón con enlace pero no información, y el "
+                        + "botón sale dentro de esa ventana.");
+    }
+    return mal;
+  });
+}
+
+// --- vista ----------------------------------------------------------------
+function aplicaVista() {
+  s.setAttribute("viewBox", vb.x + " " + vb.y + " " + vb.w + " " + vb.h);
+  VERTICE = vb.w * 0.0072;   // los tiradores no se achican al acercar
+}
+
+// Solo lo que depende de cuanto se ha acercado: el encuadre, el radio de los
+// tiradores y el tamano de las etiquetas.
+//
+// Esta separado de dibuja() por el zoom. La rueda dispara decenas de veces por
+// segundo, y dibuja() reconstruye el mapa entero Y el panel de la derecha: con
+// eso, cada muesca de la rueda costaba un monton de trabajo y el zoom se veia
+// a tirones. Aqui solo se tocan los atributos que cambian con la escala.
+function reencuadra() {
+  aplicaVista();
+  var nodos = gZonas.querySelectorAll("circle"), i;
+  for (i = 0; i < nodos.length; i++) nodos[i].setAttribute("r", VERTICE);
+  nodos = gAyudas.querySelectorAll("text");
+  var tam = vb.w * 0.0135;
+  for (i = 0; i < nodos.length; i++) nodos[i].setAttribute("font-size", tam);
+}
+
+function verTodo() {
+  var v = E.vista;
+  var margen = Math.min(E.ancho, E.alto) * 0.02;
+  vb = {x: v[0] - margen, y: v[1] - margen, w: v[2] + margen * 2, h: v[3] + margen * 2};
+  dibuja();
+}
+
+function acerca(f, cx, cy) {
+  var nw = Math.min(Math.max(vb.w * f, 40), E.ancho * 1.8);
+  var nh = nw * (vb.h / vb.w);
+  vb.x = cx - (cx - vb.x) * (nw / vb.w);
+  vb.y = cy - (cy - vb.y) * (nh / vb.h);
+  vb.w = nw; vb.h = nh;
+  reencuadra();
+}
+
+function zoomAlCentro(f) { acerca(f, vb.x + vb.w / 2, vb.y + vb.h / 2) }
+
+// De coordenadas de pantalla a coordenadas del mapa. La CTM del <svg> manda
+// sobre el transform del <g> (aqui no hay ninguno), asi que vale la inversa.
+function aMapaCliente(cliente) {
+  var p = new DOMPoint(cliente.x, cliente.y).matrixTransform(s.getScreenCTM().inverse());
+  return [Math.round(p.x), Math.round(p.y)];
+}
+function aMapa(ev) { return aMapaCliente({x: ev.clientX, y: ev.clientY}) }
+
+// --- dibujo ---------------------------------------------------------------
+function dibuja() {
+  sueltaVectores();
+  var mal = problemas();
+
+  gZonas.innerHTML = E.zonas.map(function (z, k) {
+    var a = adornosDe(z);
+    var clase = "z" + (sel && sel.tipo === "zona" && sel.i === k ? " sel" : "")
+              + (mal.zonas[k].length ? " mal" : "");
+    // Los adornos van como variables y no como colores a pelo: si se pusiera el
+    // color directamente, ganaria al del resaltado y la zona elegida no se
+    // distinguiria de las demas. Asi el filo de seleccion manda sobre el color
+    // y el color sobre el aspecto de fabrica.
+    var pintas = [];
+    if (a.f) { clase += " conRelleno"; pintas.push("--zf:" + a.f); }
+    if (a.l) { clase += " conLinea"; pintas.push("--zl:" + a.l); }
+    if (a.p) clase += " punteada";
+    if (a.a) clase += " za-" + a.a;
+    if (a.b) clase += " zb-" + a.b;
+    if (a.d === -1) clase += " zd-reves";
+    if (a.m && a.m !== 1) pintas.push("--m:" + a.m);
+    var estilo = pintas.length ? ' style="' + pintas.join(";") + '"' : "";
+    var poli = '<path class="' + clase.trim() + '" data-zona="' + k + '"'
+             + estilo
+             + ' d="' + contorno(z[2], a.rd) + '"/>';
+    if (sel && sel.tipo === "zona" && sel.i === k) {
+      poli += z[2].map(function (p, v) {
+        var clases = [];
+        if (mal.zonas[k].length) clases.push("mal");
+        if (v === verticeSel) clases.push("acto");
+        return '<circle class="' + clases.join(" ") + '" data-zona="' + k
+             + '" data-vert="' + v + '" cx="' + p[0] + '" cy="' + p[1]
+             + '" r="' + VERTICE + '"/>';
+      }).join("");
+    }
+    return poli;
+  }).join("");
+
+  gIconos.innerHTML = E.iconos.map(function (ic, k) {
+    var dentro = dentroConAnimacion(ic);
+    if (!dentro) return "";
+    var conAro = conAroDe(ic);
+    var clases = [];
+    if (sel && sel.tipo === "icono" && sel.i === k) clases.push("sel");
+    if (multi.indexOf(k) >= 0) clases.push("multi");
+    // Los que llevan informacion se marcan porque en el mapa publicado se
+    // pueden pulsar, y los animados porque se mueven. Sin estas pistas habria
+    // que ir abriendo uno por uno para saberlo.
+    if (ic.i) clases.push("conInfo");
+    if (ic.a) clases.push("animado");
+    if (!conAro) clases.push("sinAro");
+    // Ojo con las comillas del transform: si se cuela el > sin cerrar el
+    // atributo, el navegador se traga la etiqueta entera y el icono no sale.
+    // Es justo el fallo que documenta el README del croquis.
+    return '<g class="' + clases.join(" ") + '" data-icono="' + k
+         + '" transform="' + transformDe(ic) + '"' + fuerzaDe(ic) + '><title>'
+         + escapa(ic.n || nombreDe(ic.t)) + "</title>"
+         + (conAro ? '<circle class="aro" r="13.4"/>' : "") + dentro + "</g>";
+  }).join("");
+
+  var tam = vb.w * 0.0135;
+  gAyudas.innerHTML = E.zonas.map(function (z, k) {
+    var c = cajaDe(z[2]);
+    // dy en em sigue al font-size, asi que el reencuadre del zoom solo tiene
+    // que tocar el tamano de letra y la etiqueta se recentra sola.
+    return '<text class="' + (mal.zonas[k].length ? "mal" : "") + '" data-zona="' + k
+         + '" x="' + (c[0] + c[2] / 2) + '" y="' + (c[1] + c[3] / 2)
+         + '" dy=".35em" font-size="' + tam + '" text-anchor="middle">'
+         + escapa(z[1]) + "</text>";
+  }).join("");
+
+  pintaPanel(mal);
+}
+
+function pintaPanel(mal) {
+  listaZonas.innerHTML = E.zonas.map(function (z, k) {
+    return '<button class="zona' + (sel && sel.tipo === "zona" && sel.i === k ? " sel" : "")
+         + (mal.zonas[k].length ? " mal" : "") + '" data-zona="' + k + '">'
+         + '<span class="punto"></span><span class="nom">' + escapa(z[1]) + "</span>"
+         + '<span class="npt">' + z[2].length + (z[2].length === 1 ? " esquina" : " esquinas")
+         + "</span></button>";
+  }).join("");
+
+  listaIconos.innerHTML = E.iconos.map(function (ic, k) {
+    var marcas = [];
+    if (ic.i) marcas.push("info");
+    if (ic.a) marcas.push(ic.a);
+    if (ic.r) marcas.push(Math.round(ic.r) + "°");
+    if (!conAroDe(ic)) marcas.push("sin aro");
+    return '<button class="icono'
+         + (sel && sel.tipo === "icono" && sel.i === k ? " sel" : "")
+         + (multi.indexOf(k) >= 0 ? " multi" : "")
+         + (mal.iconos[k].length ? " mal" : "")
+         + '" data-icono="' + k + '">' + miniaturaDe(ic)
+         + '<span class="nom">' + escapa(ic.n || nombreDe(ic.t))
+         + '</span><span class="coor">' + marcas.join(" · ")
+         + "</span></button>";
+  }).join("");
+  document.getElementById("sinIconos").style.display = E.iconos.length ? "none" : "";
+  pintaPropios();
+  pintaBiblioteca();
+
+  var todos = [];
+  E.zonas.forEach(function (z, k) {
+    mal.zonas[k].forEach(function (p) { todos.push(escapa(z[1]) + ": " + escapa(p)) });
+  });
+  E.iconos.forEach(function (ic, k) {
+    mal.iconos[k].forEach(function (p) {
+      todos.push("Icono " + (k + 1) + " (" + escapa(ic.n || nombreDe(ic.t)) + "): " + escapa(p));
+    });
+  });
+  if (E.avisos && E.avisos.length) todos.push.apply(todos, E.avisos.map(escapa));
+  avisos.innerHTML = todos.map(function (t) {
+    return '<div class="aviso"><b>●</b><span>' + t + "</span></div>";
+  }).join("");
+  document.getElementById("btnGuardar").disabled =
+    E.codigoViejo ||
+    mal.zonas.some(function (l) { return l.length > 0 }) ||
+    mal.iconos.some(function (l) { return l.length > 0 });
+  document.getElementById("btnSubir").disabled = E.codigoViejo;
+
+  // El formulario solo manda cuando hay una zona elegida.
+  var hay = sel && sel.tipo === "zona" && E.zonas[sel.i];
+  document.getElementById("bloqueForm").style.display = hay ? "" : "none";
+  if (hay) {
+    var z = E.zonas[sel.i];
+    if (document.activeElement !== fNombre) fNombre.value = z[0];
+    if (document.activeElement !== fCorto) fCorto.value = z[1];
+    if (document.activeElement !== fDesc) fDesc.value = z[3];
+    pintaAdornos(z.length > 4 ? z[4] : null);
+  }
+  document.getElementById("btnBorrarZona").disabled = !hay;
+
+  // Y el del icono cuando hay un icono elegido, que es donde esta el tamano.
+  var hayIcono = sel && sel.tipo === "icono" && E.iconos[sel.i];
+  document.getElementById("bloqueIcono").style.display = hayIcono ? "" : "none";
+  if (hayIcono) {
+    var ic = E.iconos[sel.i], t = Math.round(tamDe(ic)), rot = Math.round(ic.r || 0);
+    if (document.activeElement !== fTam) fTam.value = t;
+    if (document.activeElement !== nTam) nTam.value = t;
+    if (document.activeElement !== fRot) fRot.value = rot;
+    document.getElementById("vRot").textContent = rot + "°";
+    if (document.activeElement !== fAnim) fAnim.value = ic.a || "";
+    if (document.activeElement !== fInt) fInt.value = intDe(ic);
+    document.getElementById("vInt").textContent = intDe(ic).toFixed(1);
+    refrescaIntensidad(ic.a, campoIntensidad, fInt,
+                       document.getElementById("pistaInt"));
+    if (document.activeElement !== fEtiqueta) fEtiqueta.value = ic.n || "";
+    fAro.checked = conAroDe(ic);
+    // El cambio de imagen solo tiene sentido si el icono es una imagen propia:
+    // un símbolo de serie no tiene imagen que cambiar. Y se dice en cuántos
+    // iconos del mapa se usa, para que se vea el alcance del cambio.
+    var esImagenPropia = !!E.propios[ic.t];
+    campoImagen.hidden = !esImagenPropia;
+    if (esImagenPropia) {
+      var usos = E.iconos.filter(function (x) { return x.t === ic.t }).length;
+      pistaImagen.textContent = "«" + ic.t + "» se usa en " + usos
+        + (usos === 1 ? " icono" : " iconos") + " del mapa. Al cambiar la imagen "
+        + "se actualizan todos a la vez.";
+    }
+    if (document.activeElement !== fInfoTitulo) fInfoTitulo.value = ic.i ? ic.i[0] : "";
+    if (document.activeElement !== fInfoTexto) fInfoTexto.value = ic.i ? ic.i[1] : "";
+    // Los campos del boton se sincronizan con el icono de una vez y solo si
+    // el foco no esta en ninguno de los tres.
+    //
+    // Hace falta mirar los tres juntos y no cada uno por su cuenta: la casilla
+    // no guarda nada por si sola (el boton necesita texto Y direccion), asi
+    // que en cuanto el foco salia de ella para escribir en el texto, el
+    // repintado la devolvia a lo que decia el icono, la desmarcaba y cerraba
+    // los campos. Parecia que el boton no se podia activar.
+    var usandoBoton = [fBoton, fBotonTexto, fBotonDestino, fBotonUrl]
+      .indexOf(document.activeElement) >= 0;
+    if (!usandoBoton) {
+      fBoton.checked = !!ic.u;
+      fBotonTexto.value = ic.u ? ic.u[0] : "";
+      pintaDestino(fBotonDestino, fBotonUrl, pistaDestino,
+                   ic.u ? ic.u[1] : "");
+    }
+    camposBoton.hidden = !fBoton.checked;
+    actualizaPistaInfo(ic);
+    actualizaPistaBoton(ic);
+    // El nombre del modelo se propone con el del icono: casi siempre se guarda
+    // el que se acaba de configurar y se llama como él.
+    if (!fNombreModelo.value && document.activeElement !== fNombreModelo) {
+      fNombreModelo.placeholder = ic.n || nombreDe(ic.t);
+    }
+  }
+  // El bloque de alineado solo sale cuando hay algo que alinear, para no
+  // llenar el panel de botones que no hacen nada.
+  document.getElementById("bloqueAlinear").style.display =
+    multi.length >= 2 ? "" : "none";
+  if (multi.length >= 2) {
+    document.getElementById("resumenSel").textContent =
+      multi.length + " iconos marcados. Elige cómo colocarlos.";
+  }
+  document.getElementById("btnVertice").classList.toggle("principal", modoVertice);
+  // El boton de quitar solo tiene sentido con una zona elegida. Con la zona
+  // delante NO se apaga aunque no se pueda quitar nada: asi, al pulsarlo,
+  // explica que falta en vez de quedarse mudo.
+  document.getElementById("btnQuitarVertice").disabled =
+    !(sel && sel.tipo === "zona" && E.zonas[sel.i]);
+
+  // El parte de lo que hay en el mapa, que es lo que se va a subir. Va aqui y
+  // no en la pestaña, porque `dibuja` ya se llama cada vez que cambia algo.
+  if (infoMapa) {
+    infoMapa.innerHTML = filasDeDatos([
+      ["Zonas", E.zonas.length],
+      ["Zonas visibles en el mapa", E.zonas.filter(function (z) {
+        var a = (z.length > 4 && z[4]) ? z[4] : {};
+        return !!(a.f || a.l);
+      }).length],
+      ["Zonas con movimiento", E.zonas.filter(function (z) {
+        var a = (z.length > 4 && z[4]) ? z[4] : {};
+        return !!(a.a || a.b);
+      }).length],
+      ["Iconos colocados", E.iconos.length],
+      ["Iconos propios", Object.keys(E.propios || {}).length],
+      ["De esos, en vector", Object.keys(E.propios || {}).filter(function (n) {
+        return String(E.propios[n]).indexOf("data:image/svg+xml") === 0;
+      }).length],
+      ["Modelos guardados", (E.modelos || []).length]]);
+  }
+}
+
+// Le dice a quien edita qué va a pasar al tocar el icono en el mapa, que es
+// la duda más razonable al rellenar estos dos campos.
+function actualizaPistaInfo(ic) {
+  var pista = document.getElementById("pistaInfo");
+  if (ic.i) {
+    pista.textContent = "En el mapa: «" + ic.i[0] + "» con "
+      + ic.i[1].length + " caracteres. Al pulsarlo sale la ventana.";
+  } else {
+    pista.textContent = "Sin información: el icono se ve pero no se puede pulsar.";
+  }
+}
+
+// La pista del boton. Ademas de decir si esta bien, avisa del caso que no se
+// ve venir: el boton sale DENTRO de la ventana de informacion, asi que un
+// icono con enlace y sin titulo no ensena nada, porque no hay ventana donde
+// ponerlo. Sin este aviso, el boton parecia configurado y no salia.
+function actualizaPistaBoton(ic) {
+  var pista = document.getElementById("pistaBoton");
+  // De la dirección y del archivo se encarga `pintaPistaDestino`, que es la
+  // misma pista que la del botón del mapa. Aquí solo queda lo que es cosa del
+  // icono y no del destino.
+  pista.textContent = (!ic.u || ic.i) ? ""
+    : "No va a salir: el icono no tiene información, y el botón sale dentro de "
+      + "esa ventana. Rellena el título para que haya dónde ponerlo.";
+}
+
+// Lo mismo que comprueba el croquis antes de pintar el enlace, y por el mismo
+// motivo: la dirección acaba en un `href`, y una `javascript:` seria una forma
+// de ejecutar codigo en la pagina de quien mira el mapa. Aqui se avisa al
+// escribirla; alli se vuelve a mirar, porque el archivo lo puede editar
+// cualquiera a mano.
+function enlaceValido(u) {
+  return esRecursoEditor(u) || /^https?:\/\/[^\s]+$/i.test(String(u || ""));
+}
+
+// --- El destino de un boton -------------------------------------------------
+// Los dos botones del croquis -el de un icono y el del mapa- se eligen igual:
+// un texto, y a donde lleva. A donde lleva puede ser una direccion de fuera o
+// un archivo de RecursosExtra, y las dos cosas van en el MISMO desplegable.
+//
+// Juntas y no en dos controles -primero el tipo y luego cual- porque son dos
+// pasos para una sola decision, y en medio se puede quedar a medias. Un
+// archivo que no este en la lista tampoco se puede escribir a mano, asi que no
+// hay forma de apuntar a algo que no exista.
+var PREFIJO_RECURSOS = "RecursosExtra/";
+
+// Un archivo de RecursosExtra. Se comprueba la forma entera y no solo que
+// empiece por el prefijo: `RecursosExtra/../../etc` empieza bien y no vale.
+function esRecursoEditor(u) {
+  var nombre = String(u || "");
+  if (nombre.indexOf(PREFIJO_RECURSOS) !== 0) return false;
+  nombre = nombre.slice(PREFIJO_RECURSOS.length);
+  return !!nombre && nombre.indexOf("/") < 0 && nombre.indexOf("..") < 0
+      && nombre[0] !== "." && nombre.indexOf(".") > 0;
+}
+
+// Las opciones: la direccion de fuera y un archivo por cada cosa que haya en
+// RecursosExtra. La lista la manda el servidor, que es quien lee la carpeta:
+// el editor no puede adivinar que hay dentro.
+function opcionesDeDestino() {
+  var trozos = ['<option value="url">Otro sitio · escribir la dirección</option>'];
+  (E.recursos || []).forEach(function (r) {
+    trozos.push('<option value="' + escapa(PREFIJO_RECURSOS + r.n) + '">'
+              + escapa(r.n + " · " + (r.imagen ? "se abre en el mapa"
+                                                : "se descarga")
+                       + " · " + r.kb + " KB") + "</option>");
+  });
+  return trozos.join("");
+}
+
+// El archivo de la lista que corresponde a un destino, o null.
+function recursoDe(destino) {
+  var nombre = String(destino || "").slice(PREFIJO_RECURSOS.length);
+  return (E.recursos || []).find(function (r) { return r.n === nombre }) || null;
+}
+
+// Deja un selector de destino como toque: elige la opcion que corresponde y
+// ensena el campo de la direccion solo cuando toca.
+function pintaDestino(sel, url, pista, destino) {
+  // Si el desplegable esta vacio se rellena aqui: `pintaDestino` se llama
+  // tambien desde el repintado del panel, que puede llegar antes que la
+  // respuesta del servidor.
+  if (!sel.options.length) sel.innerHTML = opcionesDeDestino();
+  var dentro = esRecursoEditor(destino);
+  sel.value = dentro ? destino : "url";
+  // Si el destino guardado ya no esta en la carpeta, `value` no encuentra su
+  // opcion y el desplegable se queda en la primera. Lo avisa la pista, para no
+  // ensenar en silencio una direccion que no es la suya.
+  url.hidden = sel.value !== "url";
+  if (sel.value === "url") url.value = destino || "";
+  pintaPistaDestino(pista, destino);
+}
+
+// La pista que dice que va a pasar al pulsar. Va aparte porque se refresca
+// tambien mientras se escribe la direccion, y ahi NO hay que tocar el campo:
+// reescribirlo mientras alguien teclea le borraria lo que lleva escrito.
+function pintaPistaDestino(pista, destino) {
+  if (!pista) return;
+  if (esRecursoEditor(destino) && !recursoDe(destino)) {
+    pista.textContent = "El archivo «" + destino.slice(PREFIJO_RECURSOS.length)
+      + "» ya no está en RecursosExtra. Elige otro: así el botón no llevará a "
+      + "ninguna parte.";
+  } else if (!destino) {
+    pista.textContent = "Elige a dónde lleva para que el botón salga.";
+  } else if (!esRecursoEditor(destino)) {
+    pista.textContent = "Se abre en otra pestaña.";
+  } else {
+    var r = recursoDe(destino);
+    pista.textContent = r && r.imagen
+      ? "Se abre dentro del mapa, en una vista previa."
+      : "Se descarga al pulsarlo.";
+  }
+}
+
+// La lista de los iconos propios: lo que ocupan y como quitarlos. Se dice
+// cuantos iconos del mapa usan cada uno, porque al quitarlo se van con el.
+//
+// La miniatura se dibuja con los ajustes con los que se subio el icono, no con
+// los de fabrica: si se subio sin circulo y con animacion, en la paleta se ve
+// asi, que es como va a salir al ponerlo.
+function pintaPropios() {
+  var nombres = Object.keys(E.propios);
+  if (!nombres.length) { listaPropios.innerHTML = ""; return }
+  var total = 0;
+  nombres.forEach(function (n) { total += (E.propios[n] || "").length });
+  listaPropios.innerHTML =
+    '<div class="rotuloPequeno"><span>En el croquis · ' + nombres.length + "</span>"
+    + "<b>" + Math.round(total / 1024) + " KB</b></div>"
+    + nombres.map(function (n) {
+      var usos = E.iconos.filter(function (ic) { return ic.t === n }).length;
+      var aj = E.ajustesPropios[n] || {};
+      return '<button class="icono" data-propio="' + escapa(n) + '" title="Quitar '
+           + escapa(n) + ' del croquis">'
+           + miniaturaDe(Object.assign({t: n}, aj))
+           + '<span class="nom">' + escapa(n) + "</span>"
+           + '<span class="coor">' + (usos ? usos + " en el mapa" : "sin usar")
+           + (E.vectores[n] ? " · vector" : "")
+           + " · quitar</span></button>";
+    }).join("");
+}
+
+// La biblioteca: los PNG que se subieron alguna vez y que ahora NO estan en
+// el croquis. Estan en editor/iconos/, asi que se pueden volver a poner sin
+// tener que buscar la imagen original.
+function pintaBiblioteca() {
+  if (!E.biblioteca.length) { listaBiblioteca.innerHTML = ""; return }
+  listaBiblioteca.innerHTML =
+    '<div class="rotuloPequeno"><span>Guardados · ' + E.biblioteca.length + "</span>"
+    + "<b>" + Math.round(E.biblioteca.reduce(function (a, b) { return a + b.bytes }, 0) / 1024)
+    + " KB</b></div>"
+    + E.biblioteca.map(function (b) {
+      // La miniatura sale con los ajustes con los que se guardo, para saber
+      // como va a volver antes de recuperarlo.
+      var aj = b.ajustes || {};
+      return '<div class="ficha">'
+           + '<button class="icono" data-recupera="' + escapa(b.nombre)
+           + '" title="Volver a poner ' + escapa(b.nombre) + ' en el croquis">'
+           + miniaturaDe(Object.assign({t: b.nombre}, aj))
+           + '<span class="nom">' + escapa(b.nombre) + "</span>"
+           + '<span class="coor">' + describeAjustes(aj)
+           + (b.vector ? " · vector" : "") + " · añadir</span></button>"
+           + '<button class="quitaFicha" data-borrar="' + escapa(b.nombre)
+           + '" title="Borrar ' + escapa(b.nombre) + ' de Guardados">×</button>'
+           + "</div>";
+    }).join("");
+}
+
+// El contorno de una zona, en la forma que entiende un <path>. Calcado del que
+// usa el croquis publicado, para que lo que se ve al editar sea lo que sale
+// despues. Con `radio` en 0 salen las esquinas en angulo recto de siempre.
+//
+// Se dibuja SIEMPRE un <path>, aunque no haya redondeo, para que haya un solo
+// camino de codigo: lo que se prueba con las esquinas rectas es exactamente lo
+// mismo que se usa con las redondeadas.
+//
+// El redondeo de cada esquina se recorta a la mitad del lado mas corto que la
+// toca. Sin ese recorte, un radio mayor que el lado haria que las curvas de dos
+// esquinas se cruzaran y el contorno se retorciera en un lazo.
+function contorno(puntos, radio) {
+  var n = puntos.length;
+  if (n < 3) return "";
+  var d = "", dos = function (v) { return Math.round(v * 100) / 100 };
+  for (var i = 0; i < n; i++) {
+    var ant = puntos[(i - 1 + n) % n], aca = puntos[i], sig = puntos[(i + 1) % n];
+    var lAnt = Math.hypot(aca[0] - ant[0], aca[1] - ant[1]);
+    var lSig = Math.hypot(sig[0] - aca[0], sig[1] - aca[1]);
+    var r = Math.min(radio || 0, lAnt / 2, lSig / 2);
+    if (r > 0.05) {
+      var entra = [aca[0] + (ant[0] - aca[0]) * r / lAnt,
+                   aca[1] + (ant[1] - aca[1]) * r / lAnt];
+      var sale = [aca[0] + (sig[0] - aca[0]) * r / lSig,
+                  aca[1] + (sig[1] - aca[1]) * r / lSig];
+      d += (i ? "L" : "M") + dos(entra[0]) + " " + dos(entra[1])
+         + "Q" + dos(aca[0]) + " " + dos(aca[1]) + " "
+         + dos(sale[0]) + " " + dos(sale[1]);
+    } else {
+      d += (i ? "L" : "M") + dos(aca[0]) + " " + dos(aca[1]);
+    }
+  }
+  return d + "Z";
+}
+
+// --- los adornos de una zona ----------------------------------------------
+// Los adornos son lo que hace VISIBLE una zona en el mapa publicado: el color
+// de fondo, el de la linea, si la linea va punteada y las dos animaciones. Una
+// zona sin adornos sigue siendo invisible, que es como nacen todas.
+//
+// Van en un objeto aparte, en quinto lugar, para no seguir alargando la tupla
+// de cuatro campos de siempre. Un `z[5]` para el color y un `z[6]` para la
+// animacion obligarian a contar comas con la vista al leer el archivo, que es
+// justo el problema que se quito de los iconos.
+function adornosDe(z) {
+  if (z.length < 5 || !z[4] || typeof z[4] !== "object") z[4] = {};
+  return z[4];
+}
+
+// Escribe en los adornos de la zona elegida y repinta.
+//
+// Se llama con un cambio y limpia despues lo que ya no vale, para que el
+// archivo no se llene de campos vacios: una zona sin tocar tiene que quedar
+// escrita igual que antes de que los adornos existieran.
+function tocaZona(cambio) {
+  if (!sel || sel.tipo !== "zona" || !E.zonas[sel.i]) return;
+  var a = adornosDe(E.zonas[sel.i]);
+  cambio(a);
+  if (!a.f) delete a.f;
+  if (!a.l) delete a.l;
+  // El punteado y la animacion del borde son cosas de la linea. En vez de
+  // dejarlos puestos sin linea —cosa que el servidor rechaza— se ENCIENDE la
+  // linea: quien elige «Camina» quiere ver el borde avanzando, no un aviso de
+  // que le falta el color. Antes el desplegable estaba apagado hasta poner un
+  // color, y eso hacia que la animacion pareciera no existir.
+  if (!a.l && (a.p || a.b)) a.l = cLinea.value;
+  if (!a.l) { delete a.p; delete a.b; }
+  // El sentido es cosa de `camina`, la unica que recorre el borde entero.
+  if (a.b !== "camina") delete a.d;
+  if (!a.rd) delete a.rd;
+  // La intensidad modula un movimiento: sin movimiento no modula nada.
+  if (!a.a && !a.b) delete a.m;
+  sucio = true;
+  dibuja();
+  // Y los controles se vuelven a leer del modelo, porque encender la linea
+  // cambia la casilla del color y no seria justo dejarla desmarcada.
+  sinceraZona();
+}
+
+// Vuelve a poner los controles de los adornos como esta la zona elegida.
+function sinceraZona() {
+  if (!sel || sel.tipo !== "zona" || !E.zonas[sel.i]) return;
+  var z = E.zonas[sel.i];
+  pintaAdornos(z.length > 4 ? z[4] : null);
+}
+
+// Deja los controles como toque: lo que no aplica se apaga, con una pista que
+// diga por que. Un control que se puede tocar pero no hace nada es peor que no
+// tenerlo, porque parece que el editor esta roto.
+//
+// El punteado y la animacion del borde NO se apagan aunque no haya linea: al
+// elegirlos se enciende. Apagarlos era lo que hacia que la animacion de la
+// carretera pareciera no existir.
+function refrescaAdornos() {
+  var hay = sel && sel.tipo === "zona" && E.zonas[sel.i];
+  var a = hay ? adornosDe(E.zonas[sel.i]) : {};
+  var conMovimiento = !!(a.a || a.b);
+
+  document.getElementById("campoIntZona").classList.toggle("apagado", !conMovimiento);
+  fIntZona.disabled = !conMovimiento;
+
+  // El sentido solo vale para `camina`: las otras van y vienen en el sitio, asi
+  // que no hay nada que invertir. Se apaga con una pista que diga por que, en
+  // vez de dejarlo tocable y que no haga nada.
+  var camina = a.b === "camina";
+  document.getElementById("campoSentido").classList.toggle("apagado", !camina);
+  fSentido.disabled = !camina;
+  document.getElementById("pistaSentido").innerHTML = camina
+    ? "<b>Normal</b> recorre el borde en el orden en que están puestas las "
+      + "esquinas. <b>Al revés</b> lo recorre al contrario."
+    : "Se elige cuando el borde está en <b>Camina</b>, que es la única que "
+      + "recorre el borde de punta a punta.";
+
+  var pista = document.getElementById("pistaIntZona");
+  if (!conMovimiento) {
+    pista.textContent = "Se aprieta cuando haya una animación: la intensidad "
+      + "modula un movimiento, y sin movimiento no modula nada.";
+  } else if (a.b === "camina") {
+    pista.textContent = "Con Camina, la intensidad alarga las rayas de la "
+      + "línea: más alta, rayas más gordas y más separadas.";
+  } else {
+    pista.textContent = "Cuánto se mueve, no a qué velocidad. Con 0.2 apenas "
+      + "se nota y con 2.5 se ve desde lejos.";
+  }
+}
+
+// Rellena los controles con los adornos de la zona elegida.
+function pintaAdornos(z) {
+  z = z || {};
+  fRelleno.checked = !!z.f;
+  if (z.f) cRelleno.value = z.f;
+  fLinea.checked = !!z.l;
+  if (z.l) cLinea.value = z.l;
+  fPunteada.checked = !!z.p;
+  fAnimZona.value = z.a || "";
+  fAnimBorde.value = z.b || "";
+  // El sentido se guarda solo cuando va al reves; el normal es el que sale
+  // solo, asi que el desplegable ensena «Normal» cuando no hay nada.
+  fSentido.value = (z.d === -1) ? "-1" : "1";
+  var rd = (typeof z.rd === "number") ? z.rd : 0;
+  fRedondeo.value = rd;
+  document.getElementById("vRedondeo").textContent = Math.round(rd);
+  var m = (typeof z.m === "number") ? z.m : 1;
+  fIntZona.value = m;
+  document.getElementById("vIntZona").textContent = m.toFixed(1);
+  refrescaAdornos();
+}
+
+function elige(tipo, i, sumar) {
+  var antes = sel;
+  sel = (i === undefined ? null : {tipo: tipo, i: i});
+  modoVertice = modoVertice && tipo === "zona";
+  // La esquina marcada pertenece a UNA zona: al cambiar de zona el indice
+  // apuntaria a otro punto, y quitar se llevaria por delante uno que nadie
+  // eligio.
+  if (!sel || sel.tipo !== "zona" || !antes || antes.tipo !== "zona"
+      || antes.i !== sel.i) {
+    verticeSel = null;
+  }
+  // Con Mayús el clic suma o quita de la selección múltiple, sin cambiar el
+  // que está elegido. Es lo de siempre en cualquier editor: Mayús para
+  // agrupar, clic normal para empezar de cero.
+  if (tipo === "icono" && i !== undefined && sumar) {
+    var pos = multi.indexOf(i);
+    if (pos >= 0) multi.splice(pos, 1);
+    else multi.push(i);
+  } else if (!(tipo === "icono" && antes && antes.tipo === "icono"
+               && multi.indexOf(antes.i) >= 0 && multi.indexOf(i) >= 0)) {
+    // Al cambiar de icono sin Mayús se limpia la marca, salvo que el nuevo ya
+    // estuviera marcado: en ese caso se está trabajando con el grupo.
+    multi = [];
+  }
+  // Las marcas se guardan por indice, asi que al borrar un icono quedan
+  // corridas y marcan al vecino. Se limpian y se vuelven a poner.
+  multi = multi.filter(function (k) { return E.iconos[k] });
+  // El panel se pone en la pestaña de lo que se acaba de elegir: es lo que uno
+  // espera al tocar una zona y no encontrar sus datos, porque el panel se
+  // habia quedado en otra pestaña.
+  if (sel) ponPestana(sel.tipo === "zona" ? "zona" : "iconos");
+  dibuja();
+  if (tipo === "icono" && i !== undefined)
+    listaIconos.querySelector('.icono[data-icono="' + i + '"]')
+      ?.scrollIntoView({block: "nearest"});
+}
+function hayCambios() {
+  sucio = true;
+  dibuja();
+}
+
+// --- alineacion -----------------------------------------------------------
+// Coloca los iconos marcados en fila, columna o rejilla. Se parte de donde
+// estan, asi que el resultado es el que uno espera: los iconos se ordenan
+// segun su posicion actual y se reparten parejo.
+//
+// El paso entre uno y otro es el mayor entre el reparto exacto y lo que mide
+// el icono mas grande. Con eso casi nunca se tocan; si el hueco es mas chico
+// que los iconos, se quedan pegados, que es mejor que meterlos donde no van.
+function alinea(modo) {
+  if (multi.length < 2) return;
+  var idx = multi.slice().sort(function (a, b) { return a - b });
+  var ics = idx.map(function (k) { return E.iconos[k] });
+  var grande = Math.max.apply(null, ics.map(tamDe));
+
+  if (modo === "columna") {
+    // Ordenados de arriba abajo y repartidos en vertical.
+    ics.sort(function (a, b) { return a.y - b.y });
+    var ys = ics.map(function (ic) { return ic.y });
+    var alto = Math.max.apply(null, ys) - Math.min.apply(null, ys);
+    var paso = Math.max(alto / (ics.length - 1), grande);
+    var y0 = Math.min.apply(null, ys);
+    var x = Math.round(ics.reduce(function (a, ic) { return a + ic.x }, 0) / ics.length);
+    ics.forEach(function (ic, n) { ic.x = x; ic.y = Math.round(y0 + paso * n) });
+  } else if (modo === "rejilla") {
+    // Una cuadricula lo mas cuadrada posible, empezando por arriba a la
+    // izquierda de donde estaban.
+    var cols = Math.ceil(Math.sqrt(ics.length));
+    var filas = Math.ceil(ics.length / cols);
+    ics.sort(function (a, b) { return (a.y - b.y) || (a.x - b.x) });
+    var x0 = Math.min.apply(null, ics.map(function (ic) { return ic.x }));
+    var y0r = Math.min.apply(null, ics.map(function (ic) { return ic.y }));
+    ics.forEach(function (ic, n) {
+      ic.x = Math.round(x0 + grande * 1.25 * (n % cols));
+      ic.y = Math.round(y0r + grande * 1.25 * Math.floor(n / cols));
+    });
+  } else {
+    // Fila: todos a la misma altura, repartidos en horizontal.
+    ics.sort(function (a, b) { return a.x - b.x });
+    var xs = ics.map(function (ic) { return ic.x });
+    var ancho = Math.max.apply(null, xs) - Math.min.apply(null, xs);
+    var pasox = Math.max(ancho / (ics.length - 1), grande);
+    var x0f = Math.min.apply(null, xs);
+    var y = Math.round(ics.reduce(function (a, ic) { return a + ic.y }, 0) / ics.length);
+    ics.forEach(function (ic, n) { ic.y = y; ic.x = Math.round(x0f + pasox * n) });
+  }
+
+  // Al repartir pueden salirse del mapa. Se mete el grupo entero hacia dentro
+  // en vez de recortar uno por uno: asi no se deforma la alineacion.
+  var xs2 = ics.map(function (ic) { return ic.x });
+  var ys2 = ics.map(function (ic) { return ic.y });
+  var arregloX = Math.max(0, Math.ceil(12 - Math.min.apply(null, xs2)),
+                          Math.ceil(Math.max.apply(null, xs2) - (E.ancho - 12)));
+  var arregloY = Math.max(0, Math.ceil(12 - Math.min.apply(null, ys2)),
+                          Math.ceil(Math.max.apply(null, ys2) - (E.alto - 12)));
+  if (arregloX || arregloY) {
+    ics.forEach(function (ic) { ic.x -= arregloX; ic.y -= arregloY });
+  }
+
+  hayCambios();
+  aviso("Colocados " + ics.length + " iconos en " + modo + ".", "ok");
+}
+
+// --- arrastre -------------------------------------------------------------
+var arrastre = null;
+s.addEventListener("pointerdown", function (ev) {
+  if (ev.button !== 0) return;
+  var p = aMapa(ev);
+
+  // 1. Estampar: el clic sobre el mapa pone un icono con la configuracion que
+  //    se eligio. NO se suelta al colocar, a proposito: asi se ponen varios
+  //    seguidos sin volver a elegir. Se sale con Escape o volviendo a pulsar
+  //    lo mismo en la paleta o en los modelos.
+  if (estampa) {
+    var nuevo = Object.assign({}, estampa, {x: p[0], y: p[1]});
+    // El indice del modelo es cosa de la lista, no del icono: si se colara,
+    // acabaria escrito en el croquis y el validador lo rechazaria.
+    delete nuevo.modelo;
+    E.iconos.push(nuevo);
+    // La seleccion apunta al recien puesto, para que el panel ensene su ficha
+    // y se pueda retocar en el sitio si algo no cuadra.
+    elige("icono", E.iconos.length - 1);
+    hayCambios();
+    return;
+  }
+
+  // 2. Meter una esquina nueva en la zona elegida, en el lado mas cercano.
+  if (modoVertice && sel && sel.tipo === "zona") {
+    var pts = E.zonas[sel.i][2], mejor = 0, menor = Infinity;
+    for (var i = 0; i < pts.length; i++) {
+      var a = pts[i], b = pts[(i + 1) % pts.length];
+      var d = distaSobreSegmento(p, a, b);
+      if (d.dist < menor) { menor = d.dist; mejor = i; }
+    }
+    pts.splice(mejor + 1, 0, p);
+    // La marca apunta a un indice, y al meter una esquina los de detras se
+    // corren: la que estaba marcada ya no es la misma.
+    verticeSel = null;
+    hayCambios();
+    return;
+  }
+
+  var vertice = ev.target.closest("circle[data-vert]");
+  var zona = ev.target.closest(".z[data-zona]");
+  var icono = ev.target.closest("g[data-icono]");
+
+  if (vertice) {
+    elige("zona", +vertice.dataset.zona);
+    // Despues de elegir, porque `elige` limpia la marca al cambiar de zona y
+    // al pulsar una esquina de otra zona la marca tiene que ser la nueva. Se
+    // repinta aqui porque, si no, el dorado no saldria hasta el siguiente
+    // repintado: pulsar y soltar sin mover no repinta nada.
+    verticeSel = +vertice.dataset.vert;
+    dibuja();
+    arrastre = {que: "vertice", k: +vertice.dataset.zona, v: +vertice.dataset.vert,
+                desde: p, original: E.zonas[+vertice.dataset.zona][2].map(function (q) { return q.slice() })};
+  } else if (zona) {
+    elige("zona", +zona.dataset.zona);
+    arrastre = {que: "zona", k: +zona.dataset.zona, desde: p,
+                original: E.zonas[+zona.dataset.zona][2].map(function (q) { return q.slice() })};
+  } else if (icono) {
+    var k = +icono.dataset.icono;
+    elige("icono", k, ev.shiftKey);
+    // Arrastrar uno marcado mueve todo el grupo: es lo util de marcarlos.
+    var grupo = multi.indexOf(k) >= 0 ? multi.slice() : [k];
+    grupo = grupo.filter(function (n) { return E.iconos[n] });
+    arrastre = {que: "icono", k: k, desde: p, grupo: grupo,
+                original: grupo.map(function (n) {
+                  return [E.iconos[n].x, E.iconos[n].y];
+                })};
+  } else {
+    elige(null);
+    return;
+  }
+  s.setPointerCapture(ev.pointerId);
+  ev.preventDefault();
+});
+
+s.addEventListener("pointermove", function (ev) {
+  if (!arrastre) return;
+  var p = aMapa(ev), dx = p[0] - arrastre.desde[0], dy = p[1] - arrastre.desde[1];
+  if (arrastre.que === "vertice") {
+    E.zonas[arrastre.k][2][arrastre.v] = [
+      arrastre.original[arrastre.v][0] + dx, arrastre.original[arrastre.v][1] + dy];
+  } else if (arrastre.que === "zona") {
+    E.zonas[arrastre.k][2] = arrastre.original.map(function (q) { return [q[0] + dx, q[1] + dy] });
+  } else {
+    arrastre.grupo.forEach(function (n, j) {
+      E.iconos[n].x = arrastre.original[j][0] + dx;
+      E.iconos[n].y = arrastre.original[j][1] + dy;
+    });
+  }
+  hayCambios();
+});
+
+function suelta(ev) {
+  if (!arrastre) return;
+  arrastre = null;
+  try { s.releasePointerCapture(ev.pointerId) } catch (e) {}
+}
+s.addEventListener("pointerup", suelta);
+s.addEventListener("pointercancel", suelta);
+
+// Quita la esquina marcada de la zona elegida.
+//
+// Es lo mismo que hacia el doble clic sobre un punto, pero con un boton a la
+// vista: el doble clic no se le ocurre a nadie, y sin el no habia forma de
+// deshacer una esquina puesta de mas.
+//
+// Se pide marcar la esquina antes -un clic en el punto- a proposito: son dos
+// acciones deliberadas, y eso es lo que evita que un clic de mas se lleve por
+// delante un vertice. El deshacer de momento solo cubre los iconos, asi que una
+// esquina quitada hay que volver a ponerla a mano.
+function quitaVertice() {
+  if (!sel || sel.tipo !== "zona" || !E.zonas[sel.i]) return;
+  var pts = E.zonas[sel.i][2];
+  if (verticeSel === null || verticeSel >= pts.length) {
+    aviso("Pulsa antes la esquina que quieres quitar: se marca en dorado.",
+          "aviso");
+    return;
+  }
+  if (pts.length <= 3) {
+    aviso("Una zona no puede tener menos de 3 esquinas. Si sobran todas, "
+          + "borra la zona entera.", "aviso");
+    return;
+  }
+  pts.splice(verticeSel, 1);
+  verticeSel = null;
+  hayCambios();
+  aviso("Esquina quitada. Quedan " + pts.length + ".", "ok");
+}
+
+s.addEventListener("dblclick", function (ev) {
+  var vertice = ev.target.closest("circle[data-vert]");
+  if (!vertice) return;
+  // El doble clic marca y quita de una vez: es el atajo, y el boton existe
+  // justo porque este atajo no se descubre solo.
+  verticeSel = +vertice.dataset.vert;
+  quitaVertice();
+});
+
+s.addEventListener("wheel", function (ev) {
+  ev.preventDefault();
+  // deltaY viene en pixeles, en lineas o en paginas segun el navegador y el
+  // aparato; se pasa todo a pixeles para que la rueda del raton y el trackpad
+  // den un resultado parecido.
+  var d = ev.deltaY * (ev.deltaMode === 1 ? 33 : ev.deltaMode === 2 ? 400 : 1);
+  // El factor es continuo (exponencial) en vez de dar un salto fijo por
+  // muesca: asi el trackpad, que manda decenas de eventos muy pequenos,
+  // acerca de forma suave en vez de a pasos.
+  zoomPend = {
+    f: (zoomPend ? zoomPend.f : 1) * Math.exp(d * 0.0016),
+    cliente: {x: ev.clientX, y: ev.clientY},
+    origen: ev.target
+  };
+  if (!zoomRaf) zoomRaf = requestAnimationFrame(aplicaZoom);
+}, {passive: false});
+
+// El zoom se aplica una vez por fotograma como mucho, juntando todo lo que
+// haya llegado mientras tanto. Sin esto, un trackpad que manda 100 eventos
+// por segundo dispara 100 encuadres por segundo y el navegador no llega.
+function aplicaZoom() {
+  zoomRaf = 0;
+  if (!zoomPend) return;
+  var p = aMapaCliente(zoomPend.cliente);
+  acerca(zoomPend.f, p[0], p[1]);
+  zoomPend = null;
+}
+
+// Cuanto hay que moverse para caer del punto p al segmento ab, y a que altura.
+function distaSobreSegmento(p, a, b) {
+  var dx = b[0] - a[0], dy = b[1] - a[1];
+  var largo2 = dx * dx + dy * dy;
+  var t = largo2 ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / largo2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  var q = [a[0] + t * dx, a[1] + t * dy];
+  return {dist: Math.hypot(p[0] - q[0], p[1] - q[1]), t: t, punto: q};
+}
+
+// --- teclado --------------------------------------------------------------
+addEventListener("keydown", function (ev) {
+  if (/^(INPUT|TEXTAREA)$/.test(ev.target.tagName)) {
+    if (ev.key === "s" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); guardar() }
+    return;
+  }
+  if (ev.key === "s" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); guardar(); return }
+  if (ev.key === "z" && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); deshacer(); return }
+  if (ev.key === "Escape") {
+    // El menú de subir va primero: si está abierto, Escape lo cierra, que es
+    // lo que uno espera de un menú.
+    if (!DIA.hidden) { cerrarDialogo(); return }
+    // Después suelta lo que haya puesto: el estampado, y si no había nada que
+    // estampar, la selección. Es el orden que uno espera: lo último que
+    // hiciste es lo primero que se deshace.
+    if (!sueltaEstampa()) {
+      modoVertice = false;
+      elige(null);
+    }
+    return;
+  }
+  if (!sel) return;
+  if (ev.key === "Delete" || ev.key === "Backspace") {
+    ev.preventDefault(); borrar(); return;
+  }
+  var paso = ev.shiftKey ? 10 : 1, d = null;
+  if (ev.key === "ArrowLeft") d = [-paso, 0];
+  else if (ev.key === "ArrowRight") d = [paso, 0];
+  else if (ev.key === "ArrowUp") d = [0, -paso];
+  else if (ev.key === "ArrowDown") d = [0, paso];
+  if (!d) return;
+  ev.preventDefault();
+  if (sel.tipo === "zona") {
+    E.zonas[sel.i][2] = E.zonas[sel.i][2].map(function (q) { return [q[0] + d[0], q[1] + d[1]] });
+  } else if (multi.length >= 2) {
+    // Con varios marcados, las flechas mueven el grupo entero. Es la forma de
+    // cuadrar un grupo al milímetro sin pelearse con el ratón.
+    multi.forEach(function (k) {
+      if (!E.iconos[k]) return;
+      E.iconos[k].x += d[0];
+      E.iconos[k].y += d[1];
+    });
+  } else {
+    E.iconos[sel.i].x += d[0];
+    E.iconos[sel.i].y += d[1];
+  }
+  hayCambios();
+});
+
+// --- paleta y modelos -----------------------------------------------------
+// La paleta son los simbolos de serie y los iconos propios; los modelos van
+// aparte, en su propia caja, porque no son tipos de icono sino iconos ya
+// hechos. Pulsar cualquiera de los dos deja el modo de estampado puesto.
+
+// Con que sale un tipo al ponerlo en el mapa. Los simbolos de serie salen con
+// el tamaño de los nuevos y sin nada mas; los iconos propios, con los ajustes
+// que se eligieron al subirlos, que es lo que hace que repetir un icono propio
+// no obligue a configurarlo cada vez.
+// El tamaño con el que nacen los iconos: lo que hay en la casilla, no lo que
+// marca la barra, que se queda en TAM_BARRA cuando el número la pasa.
+function tamNuevo() {
+  var v = Math.round(+nTamNuevo.value);
+  return (isFinite(v) && v >= TAM_MIN) ? v : TAM_ICONO;
+}
+
+function ajustesDe(tipo) {
+  if (E.propios[tipo]) {
+    return Object.assign({s: tamNuevo()}, E.ajustesPropios[tipo] || {});
+  }
+  return {s: tamNuevo()};
+}
+
+function estampaDe(tipo) {
+  return Object.assign({t: tipo, n: nombreDe(tipo)}, ajustesDe(tipo));
+}
+
+function pintaPaleta() {
+  var deSerie = Object.keys(E.simbolos).map(function (t) {
+    return paloHTML(estampaDe(t), E.simbolos[t], false);
+  });
+  // Los propios van al final, con el borde discontinuo: asi se ve de un
+  // vistazo cuales son de la casa y cuales los subio quien edita.
+  var mios = Object.keys(E.propios).map(function (t) {
+    return paloHTML(estampaDe(t), t, true);
+  });
+  paleta.innerHTML = deSerie.concat(mios).join("");
+  pintaModelos();
+}
+
+function paloHTML(ic, etiqueta, propio) {
+  var corto = etiqueta.length > 11 ? etiqueta.slice(0, 10) + "…" : etiqueta;
+  var puesto = estampa && estampa.t === ic.t && !estampa.modelo;
+  // Los vectores llevan una marca: son los que se ven nitidos al ampliar, y
+  // saberlo al elegir ahorra tener que subir el icono otra vez mas adelante.
+  var vector = propio && E.vectores[ic.t];
+  return '<div class="palo' + (puesto ? " acto" : "")
+       + (propio ? " propio" : "") + (vector ? " vector" : "")
+       + '" draggable="true" data-tipo="'
+       + escapa(ic.t) + '" title="' + escapa(etiqueta)
+       + (vector ? " · vector, no se pixela al ampliarlo" : "") + '">'
+       + miniaturaDe(ic) + "<span>" + escapa(corto) + "</span></div>";
+}
+
+// Los modelos: un icono guardado entero. La miniatura se dibuja con su tamano,
+// su giro, su animacion y su circulo de verdad, para que se vea lo que se va a
+// estampar antes de estamparlo.
+function pintaModelos() {
+  if (!E.modelos.length) {
+    document.getElementById("resumenModelos").textContent =
+      "Ninguno. Configura un icono y pulsa «Guardar como modelo» para poder "
+      + "poner más iguales de un clic.";
+    listaModelos.innerHTML = "";
+    return;
+  }
+  document.getElementById("resumenModelos").textContent =
+    E.modelos.length + (E.modelos.length === 1 ? " modelo" : " modelos")
+    + ". Pulsa uno y luego el mapa: puedes poner varios seguidos.";
+  listaModelos.innerHTML = E.modelos.map(function (m, k) {
+    var ic = m.i || {};
+    var nota = [];
+    if (ic.a) nota.push(ic.a + (ic.m ? " ×" + ic.m : ""));
+    if (ic.r) nota.push(Math.round(ic.r) + "°");
+    if (ic.s) nota.push(Math.round(ic.s));
+    if (ic.i) nota.push("info");
+    if (conAroDe(ic) === false) nota.push("sin aro");
+    var puesto = estampa && estampa.modelo === k;
+    return '<div class="modelo' + (puesto ? " acto" : "") + '" data-modelo="' + k
+         + '" title="' + escapa(m.nombre) + '">'
+         + '<button class="quita" data-quita="' + k + '" title="Quitar el modelo">×</button>'
+         + miniaturaDe(ic)
+         + '<span class="rotulo">' + escapa(m.nombre) + "</span>"
+         + '<span class="nota">' + escapa(nota.join(" · ") || "como los demás") + "</span>"
+         + "</div>";
+  }).join("");
+}
+
+paleta.addEventListener("dragstart", function (ev) {
+  var p = ev.target.closest(".palo");
+  if (!p) return;
+  // El arrastre tambien estampa, y se lleva el tamano de los nuevos, que es lo
+  // que se ve en la miniatura de la paleta.
+  estampa = estampaDe(p.dataset.tipo);
+  pintaPaleta();
+  ev.dataTransfer.setData("text/plain", p.dataset.tipo);
+  ev.dataTransfer.effectAllowed = "copy";
+});
+paleta.addEventListener("click", function (ev) {
+  var p = ev.target.closest(".palo");
+  if (!p) return;
+  var t = p.dataset.tipo;
+  // Volver a pulsar el mismo lo suelta: es la forma de salir sin el teclado.
+  estampa = (estampa && estampa.t === t && !estampa.modelo) ? null : estampaDe(t);
+  modoVertice = false;
+  pintaPaleta();
+  avisaEstampa();
+});
+
+listaModelos.addEventListener("click", function (ev) {
+  var quita = ev.target.closest("[data-quita]");
+  if (quita) {
+    var m = E.modelos[+quita.dataset.quita];
+    if (!m) return;
+    fetch("/api/modelos", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({quitar: m.nombre})
+    }).then(function (r) { return r.json().then(function (d) { return [r.ok, d] }) })
+      .then(function (par) {
+        if (!par[0]) { aviso(par[1].mensaje || "No se pudo quitar.", "mal"); return }
+        E.modelos = par[1].modelos;
+        estampa = null;
+        pintaModelos();
+        aviso("Modelo «" + m.nombre + "» quitado.", "ok");
+      }).catch(function (e) { aviso("No se pudo quitar: " + e.message, "mal") });
+    return;
+  }
+  var caja = ev.target.closest("[data-modelo]");
+  if (!caja) return;
+  var k = +caja.dataset.modelo;
+  if (estampa && estampa.modelo === k) {
+    estampa = null;
+  } else {
+    // El modelo se copia tal cual y se le marca de donde viene, para poder
+    // resaltarlo en la lista. La posicion la pondra el clic.
+    estampa = Object.assign({}, E.modelos[k].i, {modelo: k});
+  }
+  modoVertice = false;
+  pintaPaleta();
+  avisaEstampa();
+});
+
+// Dice que se esta estampando y como se sale, que es la duda que surge al ver
+// que el mapa sigue en modo colocar despues de poner un icono.
+function avisaEstampa() {
+  if (!estampa) { aviso("", ""); return }
+  var que = estampa.modelo !== undefined
+    ? "«" + E.modelos[estampa.modelo].nombre + "»"
+    : nombreDe(estampa.t).toLowerCase();
+  aviso("Pon " + que + ": cada clic en el mapa añade uno. Escape para terminar.", "");
+}
+
+// Deja el mapa limpio de estampado, sin tocar nada mas.
+function sueltaEstampa() {
+  if (!estampa) return false;
+  estampa = null;
+  pintaPaleta();
+  aviso("", "");
+  return true;
+}
+
+// Guarda el icono elegido entero —menos la posicion— como modelo.
+document.getElementById("btnModelo").addEventListener("click", function () {
+  if (!sel || sel.tipo !== "icono" || !E.iconos[sel.i]) {
+    aviso("Elige antes el icono que quieres guardar como modelo.", "aviso");
+    return;
+  }
+  var ic = E.iconos[sel.i];
+  var nombre = fNombreModelo.value.trim() || (ic.n || nombreDe(ic.t));
+  fetch("/api/modelos", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({nombre: nombre, icono: ic})
+  }).then(function (r) { return r.json().then(function (d) { return [r.ok, d] }) })
+    .then(function (par) {
+      var ok = par[0], d = par[1];
+      if (!ok) { aviso(d.mensaje || "No se pudo guardar el modelo.", "mal"); return }
+      E.modelos = d.modelos;
+      fNombreModelo.value = "";
+      pintaModelos();
+      aviso("Modelo «" + d.guardado.nombre + "» guardado con todo: tamaño, giro, "
+            + "animación, círculo e información. Púlsalo en Modelos y cada clic "
+            + "en el mapa pone uno igual.", "ok");
+    }).catch(function (e) { aviso("No se pudo guardar: " + e.message, "mal") });
+});
+// El arrastre HTML5 dispara pointerup en el destino; aqui se lee el tipo que
+// venia en el dataTransfer. Sin esto, el pointerdown del mapa colocaria el
+// icono en la esquina por no saber que se solto dentro.
+s.addEventListener("dragover", function (ev) { ev.preventDefault(); ev.dataTransfer.dropEffect = "copy" });
+s.addEventListener("drop", function (ev) {
+  ev.preventDefault();
+  var tipo = ev.dataTransfer.getData("text/plain");
+  var ic = estampa || (tipo ? estampaDe(tipo) : null);
+  if (!ic) return;
+  ic = Object.assign({}, ic);
+  delete ic.modelo;
+  // Un arrastre estampa una sola vez y suelta: es una accion suelta, no un
+  // modo. Dejarlo puesto pondria un icono en cada clic siguiente, y arrastrar
+  // ya significa «quiero este aqui» y nada mas.
+  estampa = null;
+  E.iconos.push(Object.assign(ic, {x: aMapa(ev)[0], y: aMapa(ev)[1]}));
+  pintaPaleta();
+  elige("icono", E.iconos.length - 1);
+  hayCambios();
+  aviso("", "");
+});
+
+// --- El menú de subir una imagen -------------------------------------------
+// Al elegir una imagen no entra directa a la paleta: se abre esto, donde se
+// elige el tamaño, la animación y si lleva círculo. Esos valores se guardan
+// con la imagen en la biblioteca, así que al volver a poner ese icono sale
+// como se dejó, no con los valores de fábrica.
+//
+// Después cada icono colocado en el mapa se puede cambiar como cualquier otro:
+// esto solo decide con qué nace.
+// Coloca el tamaño en el menú: la barra hasta su tope y la casilla con el
+// valor de verdad, que puede pasarlo.
+function ponTamDialogo(s) {
+  s = Math.round(s) || TAM_ICONO;
+  dTam.value = Math.min(s, TAM_BARRA);
+  nDTam.value = s;
+}
+
+function abrirDialogo(datosUrl, nombreArchivo, tipoReemplazo) {
+  imagenPendiente = datosUrl;
+  reemplazo = tipoReemplazo || null;
+  if (reemplazo) {
+    // Cambiar la imagen de un icono propio: el nombre se conserva y los ajustes
+    // salen de los que ya tenga guardado ese tipo, para no cambiarlos sin
+    // querer cuando lo único que se toca es el dibujo.
+    var aj = E.ajustesPropios[reemplazo] || {};
+    dNombre.value = reemplazo;
+    ponTamDialogo(aj.s || tamNuevo());
+    dAnim.value = aj.a || "";
+    dInt.value = (typeof aj.m === "number") ? aj.m : 1;
+    dAro.checked = aj.c !== 0;
+  } else {
+    // El nombre se propone a partir del archivo, sin extensión y en minúsculas,
+    // que es lo que va a acabar siendo en el croquis.
+    dNombre.value = (nombreArchivo || "").replace(/\.[^.]+$/, "")
+      .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
+    // Y los ajustes arrancan con lo que el usuario tenga puesto en el panel, que
+    // es lo que estaba usando: el tamaño de los nuevos, sin animación y con
+    // círculo, que es lo de siempre.
+    ponTamDialogo(tamNuevo());
+    dAnim.value = "";
+    dInt.value = 1;
+    dAro.checked = true;
+  }
+  pintaModoDialogo();
+  pintaPrevio();
+  DIA.hidden = false;
+  requestAnimationFrame(function () { DIA.classList.add("abierto") });
+}
+
+// Deja el menú en el modo que toca: dar de alta un icono nuevo o cambiar la
+// imagen de uno que ya está. El nombre decide, así que al cambiar se esconde
+// -no se puede elegir, es el del icono- y la pista lo explica.
+function pintaModoDialogo() {
+  var cambiando = !!reemplazo;
+  document.getElementById("tDialogo").textContent =
+    cambiando ? "Cambiar la imagen" : "Nuevo icono";
+  document.getElementById("campoDNombre").hidden = cambiando;
+  document.getElementById("btnAceptarDialogo").textContent =
+    cambiando ? "Cambiar la imagen" : "Añadir a la paleta";
+  document.getElementById("nombreDialogo").textContent =
+    dNombre.value || "(sin nombre)";
+}
+
+function cerrarDialogo() {
+  if (DIA.hidden) return;
+  DIA.classList.remove("abierto");
+  setTimeout(function () {
+    if (!DIA.classList.contains("abierto")) DIA.hidden = true;
+    imagenPendiente = null;
+    reemplazo = null;
+  }, 220);
+  aviso("", "");
+}
+
+// Los ajustes que salen del menú, en el formato que entiende el servidor.
+// La intensidad solo se pone si hay animación que la use: con `gira` el
+// servidor la rechaza, y sin ninguna animación no significa nada.
+function ajustesDelDialogo() {
+  var aj = {
+    s: +nDTam.value || tamNuevo(),
+    a: dAnim.value || "",
+    c: dAro.checked ? 1 : 0
+  };
+  if (aj.a && !sinIntensidad(aj.a) && +dInt.value !== 1) aj.m = +dInt.value;
+  return aj;
+}
+
+// La vista previa: la imagen de verdad con su recorte, su círculo y su
+// animación, para ver cómo va a quedar antes de aceptar. La imagen original se
+// recorta a lo que no es transparente y se encaja en un cuadro, y eso no se
+// sabe hasta verlo.
+function pintaPrevio() {
+  var ic = ajustesDelDialogo();
+  PREVIO.setAttribute("class", dAro.checked ? "" : "sinAro");
+  PREVIO.innerHTML = contenidoMiniatura(ic, imagenPendiente);
+  document.getElementById("vDInt").textContent = (+dInt.value).toFixed(1);
+  refrescaIntensidad(dAnim.value, campoDIntensidad, dInt, null);
+  document.getElementById("nombreDialogo").textContent =
+    dNombre.value || "(sin nombre)";
+}
+
+// Los deslizadores avisan en `input` (mientras se arrastran) y las casillas y
+// los desplegables en `change` (al soltar). Escuchar el evento que no toca
+// deja la vista previa sin actualizar hasta que se toque otra cosa.
+dTam.addEventListener("input", function () {
+  nDTam.value = dTam.value;
+  pintaPrevio();
+});
+nDTam.addEventListener("input", function () {
+  var v = Math.round(+nDTam.value);
+  if (!isFinite(v) || v < TAM_MIN) return;
+  dTam.value = Math.min(v, TAM_BARRA);
+  pintaPrevio();
+});
+dInt.addEventListener("input", pintaPrevio);
+[dAnim, dAro].forEach(function (c) { c.addEventListener("change", pintaPrevio) });
+dNombre.addEventListener("input", function () {
+  document.getElementById("nombreDialogo").textContent = dNombre.value || "(sin nombre)";
+});
+document.getElementById("btnCancelarDialogo").addEventListener("click", cerrarDialogo);
+DIA.addEventListener("pointerdown", function (ev) {
+  if (ev.target === DIA) cerrarDialogo();
+});
+
+document.getElementById("btnAceptarDialogo").addEventListener("click", function () {
+  if (!imagenPendiente) { cerrarDialogo(); return }
+  var ajustes = ajustesDelDialogo();
+  var cambiando = !!reemplazo;
+  var nombre = reemplazo || dNombre.value.trim();
+  abrirOcupado();
+  fetch("/api/icono", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({nombre: nombre || "icono", datos: imagenPendiente,
+                          ajustes: ajustes, existentes: Object.keys(E.propios),
+                          reemplazar: reemplazo || ""})
+  }).then(function (r) { return r.json().then(function (d) { return [r.ok, d] }) })
+    .then(function (par) {
+      var ok = par[0], d = par[1];
+      cerrarOcupado();
+      if (!ok) { aviso(d.mensaje || "No se pudo preparar la imagen.", "mal"); return }
+      olvidaVector(d.nombre);
+      E.propios[d.nombre] = d.datos;
+      E.ajustesPropios[d.nombre] = d.ajustes || {};
+      E.vectores[d.nombre] = !!d.vector;
+      apuntaVector(d.nombre, d.vector ? d.svg_listo : null);
+      cerrarDialogo();
+      hayCambios();
+      pintaPaleta();
+      // Si al SVG hubo que quitarle algo, se dice. Casi siempre significa que
+      // el archivo venía de un sitio raro, y quien lo sube tiene que enterarse.
+      var extra = (d.quitado && d.quitado.length)
+        ? " Le quité " + d.quitado.length + " cosa(s) que un icono no puede "
+          + "llevar: " + d.quitado.slice(0, 3).join(", ")
+          + (d.quitado.length > 3 ? "…" : "") + "."
+        : "";
+      aviso(cambiando
+            ? "Imagen de «" + d.nombre + "» cambiada (" + Math.round(d.bytes / 1024)
+              + " KB" + (d.vector ? ", vector" : "") + "). Se actualizaron de una "
+              + "vez todos los iconos que la usan. Pulsa Guardar para publicarlo."
+              + extra
+            : "«" + d.nombre + "» añadido a la paleta (" + Math.round(d.bytes / 1024)
+              + " KB" + (d.vector ? ", vector" : "") + "). Sale con "
+              + describeAjustes(d.ajustes) + "; púlsalo y cada clic en el mapa pone "
+              + "uno. Pulsa Guardar para publicarlo." + extra,
+            (d.quitado && d.quitado.length) ? "aviso" : "ok");
+    })
+    .catch(function (e) {
+      cerrarOcupado();
+      aviso("No se pudo preparar la imagen: " + e.message, "mal");
+    });
+});
+
+// Los ajustes en palabras, para el aviso. Se dice solo lo que no es de fábrica,
+// porque «tamaño 46, sin animación, con círculo» es justo lo que sale cuando no
+// se ha tocado nada y no aporta nada leerlo.
+function describeAjustes(ajustes) {
+  var partes = [];
+  if (ajustes.s && ajustes.s !== TAM_ICONO) partes.push("tamaño " + ajustes.s);
+  if (ajustes.a) partes.push(ajustes.a + (ajustes.m ? " al " + ajustes.m : ""));
+  if (ajustes.c === 0) partes.push("sin círculo");
+  return partes.length ? partes.join(", ") : "los valores de siempre";
+}
+
+// Deja el control de la intensidad como toque: el campo apagado cuando la
+// animación elegida no la usa, con una pista que diga por que. Un deslizador
+// que se puede arrastrar pero no hace nada es peor que no tenerlo: parece que
+// el mapa está roto. El valor que tuviera NO se borra de aquí; de eso se
+// encarga quien cambia la animación, que es el único que sabe si toca.
+function refrescaIntensidad(anim, campo, control, pista) {
+  var apagada = sinIntensidad(anim);
+  campo.classList.toggle("apagado", apagada);
+  control.disabled = apagada;
+  if (pista) {
+    pista.textContent = apagada
+      ? "Esta animación da una vuelta completa: no hay movimiento que ampliar "
+        + "ni que reducir."
+      : "Cuánto se mueve, no a qué velocidad. Con 0.2 apenas se nota y con 2.5 "
+        + "el movimiento se ve desde lejos.";
+  }
+}
+
+// El botón de aceptar se apaga mientras se prepara la imagen: son unos cientos
+// de milisegundos con una imagen grande, y sin señal parece que no pasó nada.
+function abrirOcupado() {
+  var b = document.getElementById("btnAceptarDialogo");
+  b.disabled = true;
+  b.textContent = reemplazo ? "Cambiando…" : "Preparando…";
+}
+function cerrarOcupado() {
+  var b = document.getElementById("btnAceptarDialogo");
+  b.disabled = false;
+  b.textContent = reemplazo ? "Cambiar la imagen" : "Añadir a la paleta";
+}
+
+// --- iconos propios -------------------------------------------------------
+// La imagen no se guarda al subirla: se queda en memoria y se escribe al
+// pulsar Guardar, como todo lo demas. Asi no hay dos formas distintas de
+// dejar el croquis a medias.
+document.getElementById("btnImagen").addEventListener("click", function () {
+  document.getElementById("archivo").click();
+});
+
+document.getElementById("archivo").addEventListener("change", function (ev) {
+  var f = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  // Se mira el tipo y tambien el nombre: hay navegadores que dan
+  // `image/svg+xml` y otros que dan cadena vacia o `text/plain` para un SVG,
+  // y rechazar un dibujo que se ve perfecto por eso da rabia.
+  var esSvg = /\.svg$/i.test(f.name) || f.type === "image/svg+xml";
+  if (!esSvg && !/^image\//.test(f.type)) {
+    aviso("Eso no es una imagen. Sirven PNG, JPG, WebP, GIF, BMP y SVG.", "mal");
+    return;
+  }
+  // La imagen no se manda todavia: se enseña en el menú y el usuario decide
+  // con qué ajustes entra. Hasta que no pulsa Añadir, cancelar no deja rastro.
+  var lector = new FileReader();
+  lector.onload = function () { abrirDialogo(lector.result, f.name) };
+  lector.onerror = function () { aviso("No se pudo leer el archivo.", "mal") };
+  lector.readAsDataURL(f);
+});
+
+// --- cambiar la imagen de un icono propio ----------------------------------
+// Con un icono elegido cuya imagen es tuya, se puede cambiar por otra sin tocar
+// el resto de sus ajustes. El nombre es el del tipo, asi que el cambio alcanza
+// de una vez a TODOS los iconos que usan esa imagen: subir el logo corregido
+// actualiza los veinte del mapa de un golpe, sin repetirlo uno por uno.
+btnCambiarImagen.addEventListener("click", function () {
+  if (!sel || sel.tipo !== "icono" || !E.iconos[sel.i]) {
+    aviso("Elige antes el icono al que quieres cambiarle la imagen.", "aviso");
+    return;
+  }
+  if (!E.propios[E.iconos[sel.i].t]) {
+    aviso("Ese icono es un símbolo de serie, no una imagen tuya: no hay imagen "
+          + "que cambiar. Sube una nueva con «Subir una imagen…».", "aviso");
+    return;
+  }
+  archivoCambio.click();
+});
+
+archivoCambio.addEventListener("change", function (ev) {
+  var f = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!f) return;
+  if (!sel || sel.tipo !== "icono" || !E.iconos[sel.i]) return;
+  var tipo = E.iconos[sel.i].t;
+  if (!E.propios[tipo]) return;
+  // Se mira el tipo y tambien el nombre: hay navegadores que dan
+  // `image/svg+xml` y otros que dan cadena vacia o `text/plain` para un SVG.
+  var esSvg = /\.svg$/i.test(f.name) || f.type === "image/svg+xml";
+  if (!esSvg && !/^image\//.test(f.type)) {
+    aviso("Eso no es una imagen. Sirven PNG, JPG, WebP, GIF, BMP y SVG.", "mal");
+    return;
+  }
+  var lector = new FileReader();
+  lector.onload = function () { abrirDialogo(lector.result, f.name, tipo) };
+  lector.onerror = function () { aviso("No se pudo leer el archivo.", "mal") };
+  lector.readAsDataURL(f);
+});
+
+listaPropios.addEventListener("click", function (ev) {
+  var b = ev.target.closest("[data-propio]");
+  if (!b) return;
+  var n = b.dataset.propio;
+  var usos = E.iconos.filter(function (ic) { return ic.t === n }).length;
+  // Se va tambien de los iconos que lo usaban: dejarlos con un tipo que ya no
+  // existe los volveria invisibles, y eso es peor que quitarlos y decirlo.
+  if (usos) E.iconos = E.iconos.filter(function (ic) { return ic.t !== n });
+  olvidaVector(n);
+  delete E.propios[n];
+  if (sel && sel.tipo === "icono") sel = null;
+  multi = [];
+  hayCambios();
+  pintaPaleta();
+  aviso("Quitado «" + n + "»" + (usos ? " y " + usos + " icono(s) del mapa" : "")
+        + ". Sigue guardado abajo, en Guardados, por si lo quieres volver a poner.", "ok");
+  // Y vuelve a la lista de guardados, que sigue en editor/iconos/. Asi quitarlo
+  // no es perderlo: se vuelve a poner con un clic. La lista la manda el
+  // servidor, que es quien sabe que PNG hay en el disco.
+  recargaBiblioteca();
+});
+
+function recargaBiblioteca() {
+  fetch("/api/biblioteca")
+    .then(function (r) { return r.json() })
+    .then(function (d) { if (d && d.biblioteca) { E.biblioteca = d.biblioteca; dibuja() } })
+    .catch(function () {});
+}
+
+listaBiblioteca.addEventListener("click", function (ev) {
+  // La × de una fila: borra la imagen de la biblioteca. Es lo único del editor
+  // que borra algo que no se puede deshacer con Escape, así que se pregunta.
+  var x = ev.target.closest("[data-borrar]");
+  if (x) {
+    var nombre = x.dataset.borrar;
+    if (!confirm("¿Borrar «" + nombre + "» de Guardados?\n\n"
+                 + "Se pierde la imagen guardada. Si el icono está en el mapa, "
+                 + "sigue ahí, pero ya no se podrá volver a poner sin subir la "
+                 + "imagen otra vez.")) return;
+    fetch("/api/biblioteca", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({quitar: nombre})
+    }).then(function (r) { return r.json().then(function (d) { return [r.ok, d] }) })
+      .then(function (par) {
+        if (!par[0]) { aviso(par[1].mensaje || "No se pudo borrar.", "mal"); return }
+        E.biblioteca = par[1].biblioteca || [];
+        dibuja();
+        aviso("«" + nombre + "» borrado de Guardados.", "ok");
+      }).catch(function (e) { aviso("No se pudo borrar: " + e.message, "mal") });
+    return;
+  }
+
+  var b = ev.target.closest("[data-recupera]");
+  if (!b) return;
+  var n = b.dataset.recupera;
+  aviso("Recuperando «" + n + "»…", "");
+  fetch("/api/biblioteca", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({nombre: n})
+  }).then(function (r) { return r.json().then(function (d) { return [r.ok, d] }) })
+    .then(function (par) {
+      var ok = par[0], d = par[1];
+      if (!ok) { aviso(d.mensaje || "No se pudo recuperar.", "mal"); return }
+      olvidaVector(d.nombre);
+      E.propios[d.nombre] = d.datos;
+      // Los ajustes vuelven con el icono: si se subio sin circulo y con
+      // animacion, al volver a ponerlo sale asi, no con los de fabrica.
+      E.ajustesPropios[d.nombre] = d.ajustes || {};
+      E.vectores[d.nombre] = !!d.vector;
+      apuntaVector(d.nombre, d.vector ? d.svg_listo : null);
+      E.biblioteca = E.biblioteca.filter(function (x) { return x.nombre !== d.nombre });
+      hayCambios();
+      pintaPaleta();
+      aviso("«" + d.nombre + "» vuelve a la paleta con " + describeAjustes(d.ajustes || {})
+            + ". Ya puedes ponerlo en el mapa; pulsa Guardar para publicarlo.", "ok");
+    })
+    .catch(function (e) { aviso("No se pudo recuperar: " + e.message, "mal") });
+});
+
+// --- panel ----------------------------------------------------------------
+listaZonas.addEventListener("click", function (ev) {
+  var b = ev.target.closest(".zona");
+  if (b) elige("zona", +b.dataset.zona);
+});
+listaIconos.addEventListener("click", function (ev) {
+  var b = ev.target.closest(".icono");
+  if (b) elige("icono", +b.dataset.icono, ev.shiftKey);
+});
+
+[fNombre, fCorto, fDesc].forEach(function (campo, j) {
+  campo.addEventListener("input", function () {
+    if (!sel || sel.tipo !== "zona") return;
+    E.zonas[sel.i][j === 0 ? 0 : j === 1 ? 1 : 3] = campo.value;
+    hayCambios();
+  });
+});
+
+// Los adornos de la zona. Cada control escribe en el icono y repinta el mapa,
+// para ver el resultado mientras se elige y no despues de guardar.
+//
+// Las dos casillas de color guardan el color del selector: al marcarlas se
+// queda con el que ya tenia puesto, que es el de la ultima vez que se uso, y
+// al desmarcarlas el color desaparece del icono. Un color a medias no existe:
+// o hay color o no hay nada.
+fRelleno.addEventListener("change", function () {
+  tocaZona(function (a) {
+    if (fRelleno.checked) a.f = cRelleno.value;
+    else delete a.f;
+  });
+  refrescaAdornos();
+});
+cRelleno.addEventListener("input", function () {
+  if (!fRelleno.checked) fRelleno.checked = true;
+  tocaZona(function (a) { a.f = cRelleno.value });
+  refrescaAdornos();
+});
+fLinea.addEventListener("change", function () {
+  tocaZona(function (a) {
+    if (fLinea.checked) a.l = cLinea.value;
+    // Al quitar la linea se van con ella el punteado y la animacion del borde,
+    // que son cosas de la linea. Antes solo se quitaba la linea, y como la
+    // animacion del borde la volvia a encender sola, la casilla parecia rota:
+    // la desmarcabas y seguia puesta.
+    else { delete a.l; delete a.p; delete a.b; }
+  });
+  refrescaAdornos();
+});
+cLinea.addEventListener("input", function () {
+  if (!fLinea.checked) fLinea.checked = true;
+  tocaZona(function (a) { a.l = cLinea.value });
+  refrescaAdornos();
+});
+fPunteada.addEventListener("change", function () {
+  tocaZona(function (a) {
+    if (fPunteada.checked) a.p = 1;
+    else delete a.p;
+  });
+  refrescaAdornos();
+});
+fAnimZona.addEventListener("change", function () {
+  tocaZona(function (a) {
+    if (fAnimZona.value) a.a = fAnimZona.value;
+    else delete a.a;
+  });
+  refrescaAdornos();
+});
+fAnimBorde.addEventListener("change", function () {
+  tocaZona(function (a) {
+    if (fAnimBorde.value) a.b = fAnimBorde.value;
+    else delete a.b;
+  });
+  refrescaAdornos();
+});
+// Hacia donde avanza la linea de `camina`. El -1 es el unico que se guarda: el
+// 1 es el sentido en que estan escritos los puntos y sale solo, asi que
+// escribirlo llenaria el archivo de ajustes que no hacen nada.
+fSentido.addEventListener("change", function () {
+  tocaZona(function (a) {
+    if (+fSentido.value === -1) a.d = -1;
+    else delete a.d;
+  });
+  refrescaAdornos();
+});
+fIntZona.addEventListener("input", function () {
+  document.getElementById("vIntZona").textContent = (+fIntZona.value).toFixed(1);
+  tocaZona(function (a) {
+    if (+fIntZona.value === 1) delete a.m;
+    else a.m = +fIntZona.value;
+  });
+  refrescaAdornos();
+});
+// El redondeo de las esquinas. En 0 no se escribe nada: las esquinas en angulo
+// recto son lo de siempre, y guardarlas como un cero llenaria el archivo de
+// ajustes que no hacen nada.
+fRedondeo.addEventListener("input", function () {
+  document.getElementById("vRedondeo").textContent = Math.round(+fRedondeo.value);
+  tocaZona(function (a) {
+    if (+fRedondeo.value) a.rd = +fRedondeo.value;
+    else delete a.rd;
+  });
+  refrescaAdornos();
+});
+
+function borrar() {
+  if (!sel) return;
+  if (sel.tipo === "zona") E.zonas.splice(sel.i, 1);
+  elige(null);
+  hayCambios();
+}
+document.getElementById("btnBorrarZona").addEventListener("click", borrar);
+
+// Borra el icono elegido. Si ademas hay varios marcados con Mayús, se van
+// todos: es lo que uno espera al haberlos marcado, y obligar a borrarlos de
+// uno en uno despues de agruparlos no tiene sentido.
+document.getElementById("btnBorrarIcono").addEventListener("click", function () {
+  if (!sel || sel.tipo !== "icono" || !E.iconos[sel.i]) return;
+  borraIconos(multi.length >= 2 ? multi : [sel.i]);
+});
+
+// Borra los iconos indicados por su indice, de mayor a menor para que al
+// quitarlos no se corran los que quedan por quitar.
+function borraIconos(índices) {
+  apuntaHistorial();
+  var aBorrar = índices.slice().sort(function (a, b) { return b - a });
+  var cuantos = 0;
+  aBorrar.forEach(function (k) {
+    if (E.iconos[k]) { E.iconos.splice(k, 1); cuantos++ }
+  });
+  multi = [];
+  elige(null);
+  hayCambios();
+  aviso(cuantos === 1 ? "Icono borrado. Ctrl+Z para deshacer."
+                      : cuantos + " iconos borrados. Ctrl+Z para deshacer.", "ok");
+}
+
+// Y todos los colocados de una vez. Pide confirmación porque puede ser mucho:
+// el que se equivoca de botón pierde el trabajo de media hora.
+document.getElementById("btnBorrarIconos").addEventListener("click", function () {
+  if (!E.iconos.length) { aviso("No hay ningún icono colocado.", "aviso"); return }
+  var cuantos = E.iconos.length;
+  if (!confirm("¿Borrar los " + cuantos + " iconos del mapa?\n\n"
+               + "Se recuperan con Ctrl+Z.")) return;
+  apuntaHistorial();
+  E.iconos = [];
+  multi = [];
+  elige(null);
+  hayCambios();
+  aviso(cuantos + " iconos borrados. Ctrl+Z para deshacer.", "ok");
+});
+
+// Los controles del icono elegido. Todos escriben en el icono y repintan: el
+// mapa se mueve mientras se arrastra el deslizador, para ver el resultado
+// antes de dejarlo puesto.
+function tocaIcono(cambio) {
+  if (!sel || sel.tipo !== "icono" || !E.iconos[sel.i]) return;
+  cambio(E.iconos[sel.i]);
+  sucio = true;
+  dibuja();
+}
+
+fTam.addEventListener("input", function () {
+  nTam.value = fTam.value;
+  tocaIcono(function (ic) { ic.s = +fTam.value });
+});
+// La casilla de numero manda sobre la barra: por la barra no se pasa de
+// TAM_BARRA, pero escribiendo cabe cualquier tamaño. El icono se actualiza ya,
+// mientras se teclea, siempre que el valor sea un tamaño valido.
+nTam.addEventListener("input", function () {
+  var v = Math.round(+nTam.value);
+  if (!isFinite(v) || v < TAM_MIN) return;
+  fTam.value = Math.min(v, TAM_BARRA);
+  tocaIcono(function (ic) { ic.s = v });
+});
+// El tamaño de los nuevos no toca ningún icono: es con el que nace el
+// siguiente. Y como la paleta dibuja sus miniaturas a ese tamaño, hay que
+// repintarla para que se vea.
+function aplicaTamNuevo() {
+  var v = Math.round(+nTamNuevo.value);
+  if (!isFinite(v) || v < TAM_MIN) return;
+  fTamNuevo.value = Math.min(v, TAM_BARRA);
+  if (estampa) estampa.s = v;
+  pintaPaleta();
+}
+fTamNuevo.addEventListener("input", function () {
+  nTamNuevo.value = fTamNuevo.value;
+  aplicaTamNuevo();
+});
+nTamNuevo.addEventListener("input", aplicaTamNuevo);
+fRot.addEventListener("input", function () {
+  document.getElementById("vRot").textContent = fRot.value + "°";
+  tocaIcono(function (ic) { ic.r = +fRot.value });
+});
+fAnim.addEventListener("change", function () {
+  tocaIcono(function (ic) {
+    if (fAnim.value) ic.a = fAnim.value;
+    else delete ic.a;
+    // Al pasar a una animación que da una vuelta completa se quita la
+    // intensidad: no le hace nada y el servidor la rechaza por eso mismo.
+    // Dejarla escondida en el icono seria un error de guardado sin pista.
+    if (sinIntensidad(ic.a)) delete ic.m;
+  });
+});
+// La intensidad es cuanto se mueve, no a que velocidad: el keyframe usa el
+// valor dentro de un calc(), asi que la misma animacion sirve para todos.
+fInt.addEventListener("input", function () {
+  document.getElementById("vInt").textContent = (+fInt.value).toFixed(1);
+  tocaIcono(function (ic) {
+    if (+fInt.value === 1) delete ic.m;
+    else ic.m = +fInt.value;
+  });
+});
+fEtiqueta.addEventListener("input", function () {
+  tocaIcono(function (ic) { ic.n = fEtiqueta.value });
+});
+// La información es lo que hace que el icono se pueda pulsar en el mapa. Se
+// guarda como [título, texto] y solo si hay las dos cosas: con solo el título
+// la ventana saldría vacía.
+function guardaInfo() {
+  tocaIcono(function (ic) {
+    var titulo = fInfoTitulo.value.trim(), texto = fInfoTexto.value.trim();
+    if (titulo && texto) ic.i = [titulo, texto];
+    else delete ic.i;
+  });
+  actualizaPistaInfo(E.iconos[sel.i] || {});
+  actualizaPistaBoton(E.iconos[sel.i] || {});
+}
+fInfoTitulo.addEventListener("input", guardaInfo);
+fInfoTexto.addEventListener("input", guardaInfo);
+
+// El boton con enlace. Se guarda como `u: [texto, direccion]`, igual que la
+// informacion se guarda como `i: [titulo, texto]`: dos datos que van juntos y
+// que sin el otro no sirven de nada.
+//
+// La casilla no guarda nada por si sola: solo enseña los dos campos. El `u`
+// aparece cuando hay texto y direccion, y desaparece al desmarcar, para que no
+// se quede un enlace a medias en el archivo.
+function guardaBoton() {
+  tocaIcono(function (ic) {
+    var texto = fBotonTexto.value.trim();
+    var destino = fBotonDestino.value === "url" ? fBotonUrl.value.trim()
+                                                : fBotonDestino.value;
+    if (fBoton.checked && texto && destino) ic.u = [texto, destino];
+    else delete ic.u;
+  });
+  actualizaPistaBoton(E.iconos[sel.i] || {});
+  pintaPistaDestino(pistaDestino, fBotonDestino.value === "url"
+                                  ? fBotonUrl.value.trim() : fBotonDestino.value);
+}
+fBoton.addEventListener("change", function () {
+  camposBoton.hidden = !fBoton.checked;
+  if (!fBoton.checked) {
+    // Al desmarcar se vacian los campos: si se quedaran puestos, volver a
+    // marcarla recuperaria un enlace que ya se habia borrado del icono.
+    fBotonTexto.value = "";
+    fBotonUrl.value = "";
+    fBotonDestino.selectedIndex = 0;
+  }
+  guardaBoton();
+});
+fBotonTexto.addEventListener("input", guardaBoton);
+fBotonUrl.addEventListener("input", guardaBoton);
+// Al cambiar de archivo hay que rehacer el campo de la direccion, que se
+// ensena o se esconde segun lo que se elija.
+fBotonDestino.addEventListener("change", function () {
+  fBotonUrl.hidden = fBotonDestino.value !== "url";
+  guardaBoton();
+});
+
+// --- El boton del mapa ------------------------------------------------------
+// Se elige igual que el de un icono, con la misma pieza. Lo unico que cambia
+// es donde se guarda: en `E.enlace` y no dentro de un icono, porque hay uno
+// solo y no es de nadie.
+function guardaEnlaceMapa() {
+  var texto = mTexto.value.trim();
+  var destino = mDestino.value === "url" ? mUrl.value.trim() : mDestino.value;
+  E.enlace = (mBoton.checked && texto && destino)
+    ? {t: texto, u: destino} : null;
+  sucio = true;
+  pintaPistaDestino(mPista, destino);
+}
+mBoton.addEventListener("change", function () {
+  camposMapa.hidden = !mBoton.checked;
+  if (!mBoton.checked) { mTexto.value = ""; mUrl.value = "" }
+  guardaEnlaceMapa();
+});
+mTexto.addEventListener("input", guardaEnlaceMapa);
+mUrl.addEventListener("input", guardaEnlaceMapa);
+mDestino.addEventListener("change", function () {
+  mUrl.hidden = mDestino.value !== "url";
+  guardaEnlaceMapa();
+});
+
+// El círculo de fondo. Se guarda solo cuando se quita, como `"c": 0`: así los
+// iconos que lo llevan —que son la mayoría— no llenan el archivo de repetir
+// lo de siempre, y quien lo edite a mano no necesita escribir nada para el
+// caso normal.
+fAro.addEventListener("change", function () {
+  tocaIcono(function (ic) {
+    if (fAro.checked) delete ic.c;
+    else ic.c = 0;
+  });
+});
+
+// Los botones de giro rápido. Van en pasos porque a ojo es difícil dejar un
+// icono recto: 90° para tumbarlo, 15° para corregir una perspectiva.
+document.querySelectorAll("[data-giro]").forEach(function (b) {
+  b.addEventListener("click", function () {
+    if (!sel || sel.tipo !== "icono") return;
+    // Se envuelve el ángulo para que no se acumulen vueltas sin fin: -90 y
+    // 270 son el mismo giro y el archivo se lee mejor con el número corto.
+    var r = Math.round((E.iconos[sel.i].r || 0) + (+b.dataset.giro));
+    r = ((r + 180) % 360 + 360) % 360 - 180;
+    fRot.value = r;
+    document.getElementById("vRot").textContent = r + "°";
+    tocaIcono(function (ic) { if (r) ic.r = r; else delete ic.r });
+  });
+});
+document.getElementById("btnRot0").addEventListener("click", function () {
+  fRot.value = 0;
+  document.getElementById("vRot").textContent = "0°";
+  tocaIcono(function (ic) { delete ic.r });
+});
+
+// --- alineacion -----------------------------------------------------------
+document.getElementById("btnFila").addEventListener("click", function () { alinea("fila") });
+document.getElementById("btnColumna").addEventListener("click", function () { alinea("columna") });
+document.getElementById("btnRejilla").addEventListener("click", function () { alinea("rejilla") });
+document.getElementById("btnLimpiarSel").addEventListener("click", function () {
+  multi = [];
+  dibuja();
+  aviso("", "");
+});
+document.getElementById("btnNueva").addEventListener("click", function () {
+  // Un cuadrado en medio del mapa, para moverlo desde ahi. Nace con nombre
+  // provisional porque una zona sin nombre sale como un boton vacio.
+  var cx = E.ancho / 2, cy = E.alto / 2, r = 90;
+  E.zonas.push(["Zona nueva", "Nueva " + (E.zonas.length + 1),
+    [[cx - r, cy - r], [cx + r, cy - r], [cx + r, cy + r], [cx - r, cy + r]],
+    "Describe aqui que hay en esta zona del evento."]);
+  elige("zona", E.zonas.length - 1);
+  hayCambios();
+  fNombre.focus(); fNombre.select();
+});
+document.getElementById("btnVertice").addEventListener("click", function () {
+  if (!sel || sel.tipo !== "zona") {
+    aviso("Elige antes una zona para añadirle una esquina.", "aviso"); return;
+  }
+  modoVertice = !modoVertice;
+  // Añadir una esquina y estampar iconos son dos formas de usar el mismo clic,
+  // así que no pueden estar puestas a la vez.
+  sueltaEstampa();
+  dibuja();
+  if (modoVertice) aviso("Haz clic en el borde de la zona: la esquina se mete ahí.", "");
+  else aviso("", "");
+});
+document.getElementById("btnQuitarVertice")
+  .addEventListener("click", quitaVertice);
+document.getElementById("btnTodo").addEventListener("click", verTodo);
+document.getElementById("btnMas").addEventListener("click", function () { zoomAlCentro(1 / 1.4) });
+document.getElementById("btnMenos").addEventListener("click", function () { zoomAlCentro(1.4) });
+
+// --- las pestañas del panel -----------------------------------------------
+// Cada boton ensena su `.hoja` y esconde las demas. Se guarda cual esta
+// puesta en el navegador para que al volver a abrir el editor siga donde se
+// dejo: en una tarde de trabajo se entra y se sale muchas veces, y volver
+// siempre a la primera pestaña es un paso que se da de mas.
+//
+// El nombre guardado se comprueba antes de usarlo: si algun dia se renombra
+// una pestaña, lo que quede en el navegador no valdria y el panel se veria
+// vacio sin decir por que. Con la comprobacion, cae en la primera.
+function ponPestana(nombre) {
+  var hay = document.querySelector(
+    '#pestanas .pestana[data-panel="' + nombre + '"]');
+  if (!hay) nombre = "zona";
+  Array.prototype.forEach.call(
+    document.querySelectorAll("#pestanas .pestana"), function (b) {
+      var puesta = b.dataset.panel === nombre;
+      b.classList.toggle("acto", puesta);
+      b.setAttribute("aria-selected", puesta ? "true" : "false");
+      b.tabIndex = puesta ? 0 : -1;
+    });
+  Array.prototype.forEach.call(
+    document.querySelectorAll("#panel .hoja"), function (h) {
+      h.classList.toggle("acto", h.dataset.panel === nombre);
+    });
+  try { localStorage.setItem("editorPestana", nombre) } catch (e) {}
+}
+
+// Una lista de pares nombre/valor, como las filas de la pestaña de publicar.
+function filasDeDatos(pares) {
+  return pares.map(function (p) {
+    return '<div class="dato"><span>' + escapa(String(p[0])) + "</span><b>"
+         + escapa(String(p[1])) + "</b></div>";
+  }).join("");
+}
+
+// --- los iconos propios ----------------------------------------------------
+// Los iconos van al croquis TAL COMO ESTAN: un vector se queda en vector.
+//
+// Se probo a convertirlos a PNG al publicarlos -el movil dibuja un mapa de
+// bits mas barato que un vector- y no compensa por dos motivos:
+//
+//   - Se ven peor. El vector se amplia con el zoom y el PNG se pixela, y el
+//     mapa se acerca hasta tres veces. Un icono borroso en el movil se nota
+//     mucho mas que unos milisegundos de dibujo.
+//
+//   - Pesa mas, y sobre todo PESA MAS AL DESCARGARLO. Los 17 vectores del
+//     mapa ocupan 75 KB en vector y 271 KB en PNG de 256 px, porque el PNG de
+//     un dibujo con bordes rebajados es una orla de colores que el formato no
+//     sabe resumir. Y hay una trampa que no se ve en el tamano del archivo:
+//     GitHub Pages manda gzip, y el texto de un SVG se comprime mientras que
+//     la base64 de un PNG no. Medido: el croquis entero pasa de 55 KB a
+//     100 KB de descarga.
+//
+// El peso no estaba ahi de todas formas: los iconos son 30 KB comprimidos
+// entre los dieciocho, y el fondo son 483 KB. Por eso lo que se optimizo fue
+// el fondo -en dos tamanos, ver croquis.html- y no los iconos.
+//
+// Si algun dia se quiere volver a probar, el unico sitio donde se puede hacer
+// bien es el navegador: un SVG lo entiende el motor que lo dibuja, y los
+// conversores sueltos de Python no aplican el CSS de dentro del SVG -estos
+// dibujos lo llevan, y buena parte del color sale de ahi-, asi que devuelven
+// siluetas negras. Se probo tambien.
+
+// --- guardar y subir ------------------------------------------------------
+function guardar() {
+  // Un editor viejo no sabe que le falta, asi que no puede guardar: escribiria
+  // el archivo con las reglas de antes y lo que no conoce se perderia sin
+  // dejar rastro. El boton ya esta apagado; esto es el cinturon. El servidor
+  // lo vuelve a comprobar por su cuenta.
+  if (E.codigoViejo) {
+    aviso("El editor se quedó viejo. Ciérralo y vuelve a arrancarlo antes de "
+          + "guardar: si no, se perdería lo que todavía no conoce.", "mal");
+    return Promise.resolve(false);
+  }
+  var mal = problemas();
+  if (mal.zonas.some(function (l) { return l.length > 0 })
+      || mal.iconos.some(function (l) { return l.length > 0 })) {
+    aviso("Hay zonas o iconos con problemas. Mira la lista de la derecha.", "mal");
+    return Promise.resolve(false);
+  }
+  return fetch("/api/guardar", {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({zonas: E.zonas, iconos: E.iconos,
+                          propios: E.propios, enlace: E.enlace})
+  }).then(function (r) { return r.json().then(function (d) { return [r.ok, d] }) })
+    .then(function (par) {
+      var ok = par[0], d = par[1];
+      if (!ok) { aviso(d.mensaje || "No se pudo guardar.", "mal"); return false }
+      sucio = false;
+      aviso("Guardado: " + d.guardado.zonas + " zonas, " + d.guardado.iconos
+            + " iconos y " + d.guardado.propios + " iconos propios. "
+            + "Ya se puede subir.", "ok");
+      dibuja();
+      pintaGit(d.git);
+      return true;
+    })
+    .catch(function (e) { aviso("No hay conexión con el editor: " + e.message, "mal"); return false });
+}
+
+document.getElementById("btnGuardar").addEventListener("click", guardar);
+document.getElementById("btnSubir").addEventListener("click", function () {
+  var campo = document.getElementById("commit");
+  var texto = campo.value.trim();
+  if (!texto) { aviso("Escribe antes el mensaje del cambio.", "aviso"); campo.focus(); return }
+  var encadenar = sucio ? guardar() : Promise.resolve(true);
+  encadenar.then(function (listo) {
+    if (!listo) return;
+    aviso("Subiendo…", "");
+    return fetch("/api/subir", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({mensaje: texto})
+    }).then(function (r) { return r.json().then(function (d) { return [r.ok, d] }) })
+      .then(function (par) {
+        var ok = par[0], d = par[1];
+        var texto = (d.pasos || []).map(function (p) { return p[0] + ": " + p[1] }).join("\n\n");
+        aviso((d.mensaje || "") + (texto ? "\n\n" + texto : ""), ok && d.ok ? "ok" : "mal");
+        if (ok && d.ok) campo.value = "";
+        recargaGit();
+      });
+  }).catch(function (e) { aviso("Fallo al subir: " + e.message, "mal") });
+});
+
+function pintaGit(g) {
+  E.git = g || {};
+  var resumen;
+  if (!g || !g.hay) {
+    resumen = (g && g.error) || "git no disponible";
+    marcaGit.textContent = resumen;
+    marcaGit.className = "pend";
+  } else {
+    var t = g.rama + " · " + (g.pendientes ? g.pendientes + " archivo(s) por subir" : "todo subido");
+    if (g.sinSubir) t += " · " + g.sinSubir + " commit(s) sin subir";
+    marcaGit.innerHTML = "<b>" + escapa(t) + "</b>";
+    marcaGit.className = g.pendientes || g.sinSubir ? "pend" : "";
+    marcaGit.title = g.detalle || "";
+  }
+  // Y el mismo parte, con mas detalle, en la pestaña de publicar. Es la unica
+  // forma de saber si lo que se ve en el mapa esta subido o solo en el disco.
+  if (!infoGit) return;
+  if (!g || !g.hay) {
+    infoGit.innerHTML = filasDeDatos([["Git", resumen]]);
+    return;
+  }
+  var filas = [
+    ["Rama", g.rama],
+    ["Sin guardar", g.pendientes ? g.pendientes + " archivo(s)" : "nada"],
+    ["Sin subir", g.sinSubir ? g.sinSubir + " commit(s)" : "nada"],
+    ["Bajado de GitHub", g.sinBajar ? g.sinBajar + " commit(s)" : "al día"]];
+  if (g.ultimo) filas.push(["Último cambio subido", g.ultimo]);
+  infoGit.innerHTML = filasDeDatos(filas);
+}
+function recargaGit() {
+  fetch("/api/git").then(function (r) { return r.json() }).then(pintaGit).catch(function () {});
+}
+
+// --- arranque -------------------------------------------------------------
+// Las pestañas: el clic cambia de hoja, y la que estaba puesta se recupera del
+// navegador. Se enganchan antes de pedir el estado para que el panel responda
+// desde el primer momento, aunque el servidor tarde.
+Array.prototype.forEach.call(
+  document.querySelectorAll("#pestanas .pestana"), function (b) {
+    b.addEventListener("click", function () { ponPestana(b.dataset.panel) });
+  });
+var pestanaGuardada = null;
+try { pestanaGuardada = localStorage.getItem("editorPestana") } catch (e) {}
+ponPestana(pestanaGuardada || "zona");
+
+fetch("/api/estado").then(function (r) {
+  if (!r.ok) throw new Error("el editor respondió " + r.status);
+  return r.json();
+}).then(function (d) {
+  E = Object.assign(E, d);
+  // Los dos desplegables de destino llevan lo mismo: la direccion de fuera y
+  // un archivo por cada cosa que haya en RecursosExtra. Se rellenan antes que
+  // nada, porque el repintado del panel ya los consulta.
+  fBotonDestino.innerHTML = opcionesDeDestino();
+  mDestino.innerHTML = opcionesDeDestino();
+  pintaDestino(mDestino, mUrl, mPista, (E.enlace && E.enlace.u) || "");
+  if (E.enlace && E.enlace.t) {
+    mBoton.checked = true;
+    mTexto.value = E.enlace.t;
+  }
+  camposMapa.hidden = !mBoton.checked;
+  // El servidor dice si arranco antes del ultimo cambio de codigo. Si es asi,
+  // se avisa arriba y se apaga el guardado: dejarlo pasar seria peor que
+  // fallar, porque el archivo saldria bien formado y sin parte del cambio.
+  E.codigoViejo = !!d.codigoViejo;
+  document.getElementById("reinicia").hidden = !E.codigoViejo;
+  hoja.setAttribute("width", E.ancho);
+  hoja.setAttribute("height", E.alto);
+  // El fondo se coloca como en el croquis y no pegado a 0,0: con el poster de
+  // una sola pieza el mapa esta un poco mas abajo que el banner de arriba, y
+  // estirar el poster entero al hueco del mapa correria las zonas y los iconos
+  // respecto al dibujo. Los numeros los manda el servidor, leidos del croquis.
+  var arte = E.arte || {x: 0, y: 0, w: E.ancho, h: E.alto};
+  fondo.setAttribute("x", arte.x); fondo.setAttribute("y", arte.y);
+  fondo.setAttribute("width", arte.w); fondo.setAttribute("height", arte.h);
+  fondo.setAttribute("href", "/mapa");
+  // Los topes del tamano vienen del servidor, que es quien los comprueba: si
+  // los deslizadores se movieran a otra cosa, dejarian pasar lo que luego
+  // rechazaria el guardado.
+  var t = (E.topes && E.topes.tam) || [16, 100000];
+  TAM_MIN = t[0]; TAM_MAX = t[1];
+  // La barra llega hasta TAM_BARRA, no hasta TAM_MAX: con la barra a 100000 no
+  // se podría elegir ni 50. La casilla de número sí llega al máximo de verdad.
+  [fTam, fTamNuevo, dTam].forEach(function (c) {
+    c.min = t[0]; c.max = Math.min(t[1], TAM_BARRA);
+  });
+  [nTam, nTamNuevo, nDTam].forEach(function (c) {
+    c.min = t[0]; c.max = t[1];
+  });
+  var r = (E.topes && E.topes.rot) || [-180, 180];
+  ROT_MIN = r[0]; ROT_MAX = r[1];
+  fRot.min = r[0]; fRot.max = r[1];
+  // Y la intensidad: el rango lo decide el servidor, que es quien lo valida.
+  var in_ = (E.topes && E.topes.inte) || [0.2, 2.5];
+  [fInt, dInt].forEach(function (c) { c.min = in_[0]; c.max = in_[1] });
+  if (E.topes) { TIT_MAX = E.topes.titulo || 60; TEX_MAX = E.topes.texto || 600 }
+  fInfoTitulo.maxLength = TIT_MAX;
+  if (E.topes && E.topes.boton) {
+    BOT_MAX = E.topes.boton;
+    URL_MAX = E.topes.url || 300;
+  }
+  fBotonTexto.maxLength = BOT_MAX;
+  fBotonUrl.maxLength = URL_MAX;
+  if (E.topes && E.topes.redondeo) {
+    RD_MAX = E.topes.redondeo;
+    fRedondeo.max = RD_MAX;
+  }
+  // Las animaciones las manda el servidor, que es quien las valida: si la
+  // lista de aqui se moviera aparte, se podria elegir una que luego rechaza.
+  // Son las mismas opciones en el panel y en el menú de subir, que se llenan
+  // de la misma lista para que no puedan separarse. Lo mismo con las que no
+  // tienen intensidad, que van marcadas en el desplegable: asi se ve antes de
+  // elegirla que esa no la usa, en vez de descubrirlo con el control apagado.
+  var opciones = Object.keys(E.animaciones).map(function (k) {
+    var nota = sinIntensidad(k) ? " · sin intensidad" : "";
+    return '<option value="' + escapa(k) + '">' + escapa(E.animaciones[k] + nota)
+         + "</option>";
+  }).join("");
+  fAnim.innerHTML = opciones;
+  dAnim.innerHTML = opciones;
+  // Y las de las zonas, que son otras listas. La de la zona mueve el fondo y
+  // la linea; la del borde solo la linea.
+  var listaDe = function (dic) {
+    return Object.keys(dic).map(function (k) {
+      return '<option value="' + escapa(k) + '">' + escapa(dic[k]) + "</option>";
+    }).join("");
+  };
+  fAnimZona.innerHTML = listaDe(E.animacionesZona);
+  fAnimBorde.innerHTML = listaDe(E.animacionesBorde);
+  fSentido.innerHTML = listaDe(E.sentidosCamina);
+  document.getElementById("commit").value = "Croquis: ";
+  // El enlace al croquis publicado, con la direccion que manda el servidor:
+  // asi la direccion vive en un solo sitio y no hay dos que se separen.
+  if (d.publicado) {
+    document.getElementById("enlacePublicado").href = d.publicado;
+  }
+  pintaGit(d.git);
+  pintaPaleta();
+  verTodo();
+  if (d.avisos && d.avisos.length) aviso(d.avisos.join(" "), "aviso");}).catch(function (e) {
+  aviso("No se pudo hablar con el editor: " + e.message
+        + ". ¿Sigue abierta la ventana de editor.py?", "mal");
+});
+
+addEventListener("beforeunload", function (ev) {
+  if (!sucio) return;
+  ev.preventDefault();
+  ev.returnValue = "";
+});
+</script>
+</body>
+</html>
